@@ -32,10 +32,6 @@ Variabel sensor dibuat otomatis saat robot mengirim data. Variabel kontrol dibua
 tombol di dashboard pertama kali ditekan. Sebaiknya kirim sekali setiap kontrol sebelum robot
 dinyalakan, supaya subscribe MQTT langsung mendapat nilai.
 
-> Kuota: robot mengirim 4 dot/detik, dan menahan tombol gerak mengirim 2 dot/detik. Akun STEM
-> punya batas dot harian, jadi perbesar `SENSOR_INTERVAL_MS` (firmware) dan interval polling
-> (dashboard) kalau kuota cepat habis.
-
 ## 3. Isi token di dashboard
 
 1. Buka halaman dashboard, masukkan **Token Ubidots** dan **Device label** (default `phantom`), lalu **Masuk**.
@@ -43,32 +39,65 @@ dinyalakan, supaya subscribe MQTT langsung mendapat nilai.
 3. Token **hanya disimpan di `localStorage` browser itu**, tidak pernah di repo. Untuk menghapusnya,
    buka ⚙ **Pengaturan → Logout & hapus token**.
 
-Di **Pengaturan (⚙)** kamu juga bisa mengubah device label, IP kamera ESP32-CAM, interval polling,
-dan token.
+## 4. Menggunakan dashboard
 
-**Kamera:** isi IP saja (misal `192.168.1.50`, otomatis dibuka ke `http://192.168.1.50:81/stream`)
-atau URL lengkap. Stream dibuka di tab baru, bukan di-embed, karena halaman HTTPS tidak boleh
-memuat video HTTP (*mixed content*). HP harus berada di jaringan yang sama dengan ESP32-CAM.
+Tampilan desktop: monitoring + grafik suhu di atas, kartu kontrol (Gerak, Gripper, …) + kamera di
+bawah. Di HP semuanya tersusun 1 kolom.
 
-**Kontrol:** tahan tombol ▲▼◀▶ supaya robot berjalan. Selama ditahan, perintah dikirim ulang tiap
-0,5 detik, dan saat dilepas otomatis terkirim `gerak=0`. Di laptop, pakai panah/WASD untuk
-bergerak dan **Spasi** untuk STOP darurat. Tombol **STOP DARURAT** selalu ada di bawah layar.
+- **Header:** logo, status robot (titik hijau berdenyut = online, kuning = tertunda, merah
+  berkedip = offline), jam, tombol **✎ Edit Dashboard** dan **⚙ Pengaturan**.
+- **Kartu sensor** menyala kuning/merah saat melewati ambang. `suhu_objek` di atas 35 °C membuat
+  kartu merah berkedip, muncul label **KORBAN TERDETEKSI**, dan ada strip peringatan di atas.
+- **Gerak:** tahan ▲▼◀▶ supaya robot berjalan, lalu lepas untuk berhenti (`gerak=0`). Di laptop
+  bisa pakai panah/WASD, dan **Spasi** = STOP darurat. Tombol **STOP DARURAT** selalu terlihat
+  (di bawah layar pada HP, kanan bawah pada desktop) dan langsung dikirim walau sedang antre/jeda.
+- **Kamera:** isi IP saja (misal `192.168.1.50`, otomatis dibuka ke `http://192.168.1.50:81/stream`)
+  atau URL lengkap. Stream dibuka di tab baru, bukan di-embed, karena halaman HTTPS tidak boleh
+  memuat video HTTP (*mixed content*). HP harus berada di jaringan yang sama dengan ESP32-CAM.
 
-## 4. Menambah sensor / tombol baru
+**Pengaturan (⚙):** device label, IP kamera, interval polling (default 3 detik), token, tema warna
+(Biru Garuda, Merah Rescue, Hijau Militer, Ungu Neon), dan mode Gelap/Terang. Pilihan tema langsung
+terlihat dan baru disimpan setelah **Simpan**.
 
-Semua kartu dibuat otomatis dari array `SENSORS` dan `CONTROLS` di bagian atas `app.js`.
-Untuk menambah komponen, cukup tambahkan satu objek.
+### Batas request Ubidots (STEM = 1 request/detik)
+
+- Semua variabel device dibaca dengan **1 request** (`GET /api/v2.0/devices/~phantom/variables/`).
+  Kalau endpoint itu tidak tersedia, dashboard beralih ke v1.6 (1 request per sensor, tetap antre).
+- Semua request lewat antrean dengan jarak minimal 1,1 detik. Perintah kontrol didahulukan dari
+  polling, dan nilai slider yang belum terkirim digabung (hanya nilai terakhir yang dikirim).
+- Selama tombol gerak ditahan, **polling sensor dijeda** dan nilai `gerak` dikirim ulang tiap
+  **1,5 detik** sebagai heartbeat untuk failsafe firmware.
+- STOP (`gerak=0`) dikirim seketika, tidak ikut antre.
+- Jika Ubidots membalas **HTTP 429**, dashboard menunggu otomatis (backoff 2 → 4 → 8 … maks.
+  60 detik), menampilkan hitung mundur, lalu mencoba lagi.
+
+> Kuota harian: robot mengirim 4 dot tiap 5 detik, dan menahan tombol gerak menambah 1 dot tiap
+> 1,5 detik. Perbesar `PUBLISH_INTERVAL_MS` (firmware) kalau kuota dot cepat habis.
+
+## 5. Mengubah tampilan: Mode Edit
+
+Klik **✎ Edit Dashboard**:
+
+- **Klik kartu/kontrol** untuk mengubahnya, **✕** untuk menghapus, **+ Sensor / + Kontrol / + Tambah …**
+  untuk menambah.
+- **Seret ⠿** untuk mengurutkan kartu sensor, kontrol di dalam grup, atau seluruh grup (bisa dengan
+  mouse maupun jari).
+- Sensor: label, variabel Ubidots, satuan, desimal, ikon (emoji), warna, tampil di grafik, dan
+  daftar ambang (di atas/di bawah nilai, Waspada/Bahaya, catatan).
+- Kontrol: tipe (tombol/tahan/toggle/slider), grup (kartu), label, variabel, warna, nilai,
+  min/max/step, posisi D-pad, dan tombol keyboard.
+- Konfigurasi tersimpan di `localStorage` browser. **Export JSON** untuk backup atau dipindah ke
+  HP/laptop lain, **Import JSON** untuk memuatnya, **Reset default** untuk kembali ke bawaan.
+
+Konfigurasi bawaan ada di `DEFAULT_SENSORS` dan `DEFAULT_CONTROLS` di bagian atas `app.js`.
+Format JSON export sama dengan objek di array tersebut.
 
 **Contoh sensor** (sensor gas, kartu jadi merah di atas 400 ppm):
 
 ```js
-{ label: "Gas", variable: "gas_ppm", unit: "ppm", decimals: 0, chart: false,
+{ label: "Gas", variable: "gas_ppm", unit: "ppm", decimals: 0, icon: "☁️", color: "#9085e9", chart: false,
   thresholds: [{ above: 400, level: "danger", note: "Gas berbahaya" }] },
 ```
-
-Field: `label`, `variable` (label variabel Ubidots), `unit`, `decimals`, `chart` (`true` = ikut grafik
-suhu; sebaiknya satuannya sama, °C), `color` (warna garis grafik), dan `thresholds`, yaitu daftar
-`{ above | below, level: "warn" | "danger", note }`. Ambang pertama yang cocok dipakai.
 
 **Contoh kontrol** (lampu sorot on/off):
 
@@ -77,20 +106,17 @@ suhu; sebaiknya satuannya sama, °C), `color` (warna garis grafik), dan `thresho
   on: { label: "Nyala", value: 1 }, off: { label: "Mati", value: 0 }, value: 0 },
 ```
 
-Tipe kontrol:
+| type     | field khusus                                     | perilaku                                       |
+|----------|--------------------------------------------------|------------------------------------------------|
+| `button` | `value`, `pad`                                   | kirim `value` saat diklik                      |
+| `hold`   | `value`, `release`, `pad`, `key`                 | kirim `value` tiap 1,5 dtk selama ditahan, `release` saat dilepas |
+| `toggle` | `on {label,value}`, `off {label,value}`, `value` | dua pilihan, yang aktif disorot                |
+| `slider` | `min`, `max`, `step`, `value`, `unit`            | kirim nilai saat digeser                       |
 
-| type     | field khusus                                  | perilaku                                       |
-|----------|-----------------------------------------------|------------------------------------------------|
-| `button` | `value`                                       | kirim `value` saat diklik                      |
-| `hold`   | `value`, `release`, `key`                     | kirim `value` selama ditahan, `release` saat dilepas |
-| `toggle` | `on {label,value}`, `off {label,value}`, `value` | dua pilihan, yang aktif disorot             |
-| `slider` | `min`, `max`, `step`, `value`, `unit`         | kirim nilai saat digeser                       |
+Semua kontrol memakai `group` (judul kartu) dan boleh memakai `color`. Untuk kontrol baru,
+jangan lupa tambahkan `ubidotsSubscribe(...)` dan penanganannya di `onMqttMessage()` pada firmware.
 
-Semua kontrol memakai `group` (judul kartu) dan boleh memakai `pad`
-(`up`/`down`/`left`/`right`/`center`/`upleft`/…) agar ditaruh di grid D-pad.
-Jangan lupa tambahkan `ubidotsSubscribe(...)` dan penanganannya di `onMqttMessage()` pada firmware.
-
-## 5. Firmware ESP32
+## 6. Firmware ESP32
 
 **Board:** ESP32 DevKit V1 (Arduino IDE: *DOIT ESP32 DEVKIT V1*), core ESP32 2.x/3.x. Sudah diuji
 kompilasi di core 3.3.12 (flash terpakai ±87%; pakai *Partition Scheme → Huge APP* kalau fitur bertambah).
@@ -144,16 +170,22 @@ Catatan wiring:
 
 **Fitur keamanan:**
 
-- Motor berhenti kalau tidak ada perintah `gerak` lebih dari 2 detik, atau saat WiFi/MQTT putus.
+- Dashboard mengirim ulang `gerak` tiap 1,5 detik selama tombol ditahan (`HEARTBEAT_MS`). Motor
+  berhenti kalau heartbeat tidak datang lebih dari `FAILSAFE_TIMEOUT_MS` = 2,5 detik (1,5 detik +
+  toleransi jeda jaringan 1 detik), atau saat WiFi/MQTT putus.
 - Saat (re)connect, robot mengirim `gerak=0` sebelum subscribe, supaya nilai gerak lama tidak
   membuat robot jalan sendiri.
+
+**Interval:** sensor dibaca tiap 1 detik (`SENSOR_INTERVAL_MS`, untuk OLED & log) dan dikirim ke
+Ubidots tiap **5 detik** (`PUBLISH_INTERVAL_MS`). Status "Robot online" di dashboard memakai ambang
+15 detik, jadi tetap hijau dengan interval ini.
 
 **OLED** menampilkan status WiFi/IP, suhu, kedua baterai, perintah gerak terakhir, jam, dan status SD.
 **Log microSD** ditulis ke `/phantom_log.csv` tiap detik
 (`waktu,suhu_objek,suhu_ambient,batt_motor,batt_servo,gerak`). Kalau kartu tidak ada, robot tetap
 jalan tanpa log. Jam DS3231 disinkronkan otomatis dari NTP (WIB) saat online.
 
-## 6. Ganti WiFi lewat Phantom-Setup
+## 7. Ganti WiFi lewat Phantom-Setup
 
 Mode setup aktif otomatis kalau robot gagal terhubung ke WiFi tersimpan selama lebih dari 15 detik.
 Bisa juga dipaksa dengan **menahan tombol reset WiFi (GPIO14) selama 3 detik**; cara ini menghapus

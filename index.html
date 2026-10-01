@@ -1,10 +1,13 @@
 <!doctype html>
-<html lang="id">
+<html lang="id" data-theme="garuda" data-mode="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0d1117">
-  <title>Phantom Control</title>
+  <meta name="theme-color" content="#070b12">
+  <title>Phantom Mission Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Rajdhani:wght@500;600;700&display=swap">
   <link rel="stylesheet" href="style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js" defer></script>
   <script src="app.js" defer></script>
@@ -12,7 +15,10 @@
 <body>
   <section id="login" class="login" hidden>
     <form id="login-form" class="card login-card" autocomplete="off">
-      <h1 class="brand">PHANTOM <span>GARUDA Operation</span></h1>
+      <div class="logo logo-lg">
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 3 6 10v13c0 11 7.6 19.4 18 22 10.4-2.6 18-11 18-22V10L24 3Z" fill="none" stroke="currentColor" stroke-width="3"/><path d="M14 25h7l3-7 4 13 3-6h3" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div><strong>PHANTOM</strong><span>GARUDA Operation · Rescue Robot</span></div>
+      </div>
       <p class="muted">Masukkan token Ubidots. Token hanya disimpan di browser ini (localStorage).</p>
       <label class="field">
         <span>Token Ubidots</span>
@@ -32,49 +38,75 @@
 
   <div id="app" hidden>
     <header class="topbar">
-      <div class="brand">PHANTOM <span>GARUDA Operation</span></div>
-      <div class="topbar-actions">
-        <span id="robot-status" class="pill" title="Aktivitas terakhir robot">—</span>
-        <button class="btn ghost icon" id="open-settings" aria-label="Pengaturan">⚙</button>
+      <div class="logo">
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 3 6 10v13c0 11 7.6 19.4 18 22 10.4-2.6 18-11 18-22V10L24 3Z" fill="none" stroke="currentColor" stroke-width="3"/><path d="M14 25h7l3-7 4 13 3-6h3" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div><strong>PHANTOM</strong><span>GARUDA Operation</span></div>
+      </div>
+      <div class="link-status" id="link-status" title="Aktivitas terakhir robot">
+        <span class="dot"></span><span id="robot-status">—</span>
+      </div>
+      <div class="clock" aria-label="Jam">
+        <span id="clock-time">--:--:--</span>
+        <small id="clock-date"></small>
+      </div>
+      <div class="top-actions">
+        <button class="btn ghost top-btn" id="edit-toggle" aria-pressed="false"><span aria-hidden="true">✎</span><span class="lbl">Edit Dashboard</span></button>
+        <button class="btn top-btn settings-btn" id="open-settings" aria-label="Pengaturan"><span aria-hidden="true">⚙</span><span class="lbl">Pengaturan</span></button>
       </div>
     </header>
 
-    <div id="banner" class="banner" role="alert" hidden></div>
+    <div id="editbar" class="editbar" hidden>
+      <div class="editbar-text"><strong>MODE EDIT</strong> Klik kartu untuk mengubah, seret <span class="kbd">⠿</span> untuk mengurutkan.</div>
+      <div class="editbar-actions">
+        <button class="btn" id="add-sensor">+ Sensor</button>
+        <button class="btn" id="add-control">+ Kontrol</button>
+        <button class="btn ghost" id="export-config">Export JSON</button>
+        <button class="btn ghost" id="import-config">Import JSON</button>
+        <button class="btn ghost danger-text" id="reset-config">Reset default</button>
+        <button class="btn primary" id="edit-done">Selesai</button>
+        <input type="file" id="import-file" accept="application/json,.json" hidden>
+      </div>
+    </div>
+
+    <div id="alert-strip" class="alert-strip" role="alert" hidden></div>
+    <div id="banner" class="banner" role="status" hidden></div>
 
     <main class="layout">
-      <section class="panel">
-        <h2>Monitoring <small id="last-update" class="muted"></small></h2>
+      <section class="panel area-monitor">
+        <h2><span>Monitoring</span><small id="last-update" class="muted"></small></h2>
         <div id="sensor-grid" class="sensor-grid"></div>
       </section>
 
-      <section class="panel">
-        <h2>Grafik suhu</h2>
+      <section class="panel area-chart">
+        <h2><span>Grafik suhu</span></h2>
         <div class="card chart-card">
           <div class="chart-box"><canvas id="chart" aria-label="Grafik suhu realtime"></canvas></div>
-          <p id="chart-fallback" class="muted" hidden>Grafik tidak tersedia (Chart.js gagal dimuat).</p>
+          <p id="chart-fallback" class="muted" hidden>Grafik tidak tersedia.</p>
         </div>
       </section>
 
-      <section class="panel">
-        <h2>Kontrol</h2>
+      <section class="panel area-controls">
+        <h2><span>Kontrol</span></h2>
         <div id="control-groups" class="control-groups"></div>
-      </section>
-
-      <section class="panel">
-        <h2>Kamera</h2>
-        <div class="card camera-card">
-          <p class="muted" id="camera-info"></p>
-          <button class="btn primary big" id="open-camera">Buka Kamera ↗</button>
-        </div>
       </section>
     </main>
 
     <div class="estop-bar">
-      <button id="estop" class="estop">STOP DARURAT</button>
+      <div class="hazard">
+        <button id="estop" class="estop"><span class="estop-icon" aria-hidden="true">⏻</span> STOP DARURAT</button>
+      </div>
     </div>
   </div>
 
-  <dialog id="settings" class="settings">
+  <template id="camera-template">
+    <div class="card group camera-card" data-fixed="camera">
+      <h3><span class="group-icon" aria-hidden="true">◉</span> Kamera</h3>
+      <p class="muted" id="camera-info"></p>
+      <button class="btn primary big" id="open-camera">Buka Kamera ↗</button>
+    </div>
+  </template>
+
+  <dialog id="settings" class="sheet">
     <form id="settings-form" method="dialog">
       <h2>Pengaturan</h2>
       <label class="field">
@@ -86,9 +118,21 @@
         <input id="set-camera" type="text" placeholder="192.168.1.50 atau http://192.168.1.50:81/stream" spellcheck="false" autocapitalize="off">
       </label>
       <label class="field">
-        <span>Interval polling (detik)</span>
-        <input id="set-interval" type="number" min="0.5" max="60" step="0.5" required>
+        <span>Interval polling sensor (detik)</span>
+        <input id="set-interval" type="number" min="1" max="120" step="0.5" required>
+        <small class="muted">Ubidots STEM membatasi 1 request/detik. Disarankan 3 detik atau lebih.</small>
       </label>
+      <fieldset class="field">
+        <legend>Tema warna</legend>
+        <div class="swatches" id="theme-swatches"></div>
+      </fieldset>
+      <fieldset class="field">
+        <legend>Mode tampilan</legend>
+        <div class="segmented" id="mode-options">
+          <label class="seg"><input type="radio" name="mode" value="dark"><span>🌙 Gelap</span></label>
+          <label class="seg"><input type="radio" name="mode" value="light"><span>☀️ Terang</span></label>
+        </div>
+      </fieldset>
       <label class="field">
         <span>Token Ubidots</span>
         <div class="with-btn">
@@ -96,12 +140,24 @@
           <button type="button" class="btn ghost" data-reveal="set-token">Lihat</button>
         </div>
       </label>
-      <div class="settings-actions">
+      <div class="dialog-actions">
         <button type="submit" value="save" class="btn primary">Simpan</button>
         <button type="submit" value="cancel" class="btn ghost" formnovalidate>Batal</button>
       </div>
       <hr>
-      <button type="button" id="logout" class="btn danger">Logout &amp; hapus token</button>
+      <button type="button" id="logout" class="btn danger wide">Logout &amp; hapus token</button>
+    </form>
+  </dialog>
+
+  <dialog id="editor" class="sheet">
+    <form id="editor-form" method="dialog" novalidate>
+      <h2 id="editor-title">Ubah</h2>
+      <div id="editor-fields"></div>
+      <p id="editor-error" class="error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="submit" value="save" class="btn primary">Simpan</button>
+        <button type="submit" value="cancel" class="btn ghost">Batal</button>
+      </div>
     </form>
   </dialog>
 
