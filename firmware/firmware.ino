@@ -57,8 +57,10 @@ char VAR_BATT_MOTOR[]   = "batt_motor";
 char VAR_BATT_SERVO[]   = "batt_servo";
 
 // ---------- PARAMETER ----------
-const unsigned long FAILSAFE_TIMEOUT_MS  = 2000;
-const unsigned long SENSOR_INTERVAL_MS   = 1000;
+const unsigned long PUBLISH_INTERVAL_MS  = 5000;   // kirim sensor ke Ubidots (hemat kuota STEM)
+const unsigned long SENSOR_INTERVAL_MS   = 1000;   // baca sensor, OLED & log microSD
+const unsigned long HEARTBEAT_MS         = 1500;   // dashboard mengirim ulang "gerak" tiap 1,5 dtk saat tombol ditahan
+const unsigned long FAILSAFE_TIMEOUT_MS  = HEARTBEAT_MS + 1000;   // toleransi jeda jaringan
 const unsigned long OLED_INTERVAL_MS     = 500;
 const unsigned long MQTT_RETRY_MS        = 3000;
 const unsigned long RESET_HOLD_MS        = 3000;
@@ -103,7 +105,7 @@ float suhuObjek = NAN, suhuAmbient = NAN, battMotor = NAN, battServo = NAN;
 
 bool mlxOk = false, oledOk = false, rtcOk = false, sdOk = false;
 bool wifiWasConnected = false, portalWasActive = false, timeSynced = false, ntpStarted = false;
-unsigned long wifiLostSince = 0, lastMqttAttemptMs = 0, lastSensorMs = 0, lastOledMs = 0, lastMlxRetryMs = 0;
+unsigned long wifiLostSince = 0, lastMqttAttemptMs = 0, lastSensorMs = 0, lastPublishMs = 0, lastOledMs = 0, lastMlxRetryMs = 0;
 
 // =====================================================================
 // MOTOR
@@ -491,7 +493,8 @@ void handleFailsafe() {
   bool linkOk = WiFi.status() == WL_CONNECTED && ubidots.connected();
   if (!linkOk || millis() - lastCommandMs > FAILSAFE_TIMEOUT_MS) {
     stopMotors();
-    Serial.println(linkOk ? "FAILSAFE: tidak ada perintah > 2 dtk" : "FAILSAFE: koneksi terputus");
+    if (linkOk) Serial.printf("FAILSAFE: tidak ada heartbeat > %lu ms\n", FAILSAFE_TIMEOUT_MS);
+    else Serial.println("FAILSAFE: koneksi terputus");
   }
 }
 
@@ -531,8 +534,11 @@ void loop() {
   if (now - lastSensorMs >= SENSOR_INTERVAL_MS) {
     lastSensorMs = now;
     readSensors();
-    publishSensors();
     logToSd();
+  }
+  if (now - lastPublishMs >= PUBLISH_INTERVAL_MS) {
+    lastPublishMs = now;
+    publishSensors();
   }
   if (now - lastOledMs >= OLED_INTERVAL_MS) {
     lastOledMs = now;
