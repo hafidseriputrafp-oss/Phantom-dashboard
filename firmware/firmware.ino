@@ -25,7 +25,7 @@
 #define PIN_SD_SCK         18   // VSPI
 #define PIN_SD_MISO        19
 #define PIN_SD_MOSI        23
-#define PIN_SD_CS          4
+#define PIN_SD_CS          5
 #define PIN_MOTOR_ENA      32   // L298N ENA -> PWM roda kiri (2 motor paralel)
 #define PIN_MOTOR_IN1      33
 #define PIN_MOTOR_IN2      25

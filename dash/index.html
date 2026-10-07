@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="id" data-theme="garuda" data-mode="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#070b12">
+  <title>Dashboard · Phantom Hub</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Rajdhani:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="../robot/style.css">
+  <link rel="stylesheet" href="../shared/hub.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js" defer></script>
+  <script src="../shared/core.js" defer></script>
+  <script src="dash.js" defer></script>
+</head>
+<body>
+  <section id="login" class="login" hidden>
+    <form id="login-form" class="card login-card" autocomplete="off">
+      <div class="logo logo-lg">
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 3 6 10v13c0 11 7.6 19.4 18 22 10.4-2.6 18-11 18-22V10L24 3Z" fill="none" stroke="currentColor" stroke-width="3"/><path d="M14 25h7l3-7 4 13 3-6h3" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div><strong>PHANTOM</strong><span>Dashboard Hub</span></div>
+      </div>
+      <p class="muted">Masukkan token Ubidots. Token hanya disimpan di browser ini dan dipakai bersama semua dashboard.</p>
+      <label class="field">
+        <span>Token Ubidots</span>
+        <div class="with-btn">
+          <input id="login-token" type="password" required placeholder="BBUS-xxxxxxxx" spellcheck="false" autocapitalize="off">
+          <button type="button" class="btn ghost" data-reveal="login-token">Lihat</button>
+        </div>
+      </label>
+      <p id="login-error" class="error" role="alert" hidden></p>
+      <button type="submit" class="btn primary big" id="login-submit">Masuk</button>
+    </form>
+  </section>
+
+  <div id="app" hidden>
+    <header class="topbar">
+      <div class="logo dash-head">
+        <a class="back-link" href="../" aria-label="Kembali ke Beranda">←</a>
+        <span class="dash-icon" id="dash-icon">📊</span>
+        <div><strong id="dash-name">Dashboard</strong><span>Phantom Hub</span></div>
+      </div>
+      <div class="link-status cloud-pill" id="cloud-pill"><span class="dot"></span><span class="cloud-text">—</span></div>
+      <div class="clock" aria-label="Jam WIB"><span id="clock-time">--:--:--</span><small id="clock-date"></small></div>
+      <div class="top-actions">
+        <button class="btn ghost top-btn" id="edit-toggle" aria-pressed="false"><span aria-hidden="true">✎</span><span class="lbl">Edit</span></button>
+        <button class="btn top-btn settings-btn" id="open-settings" aria-label="Pengaturan"><span aria-hidden="true">⚙</span><span class="lbl">Pengaturan</span></button>
+      </div>
+    </header>
+
+    <div id="editbar" class="editbar" hidden>
+      <div class="editbar-text"><strong>MODE EDIT</strong> Klik widget untuk mengubah, seret <span class="kbd">⠿</span> untuk mengurutkan.</div>
+      <div class="editbar-actions">
+        <button class="btn" id="add-widget">+ Widget</button>
+        <button class="btn ghost" id="export-dash">Export JSON</button>
+        <button class="btn ghost" id="import-dash">Import JSON</button>
+        <button class="btn ghost danger-text" id="reset-preset" hidden>Reset ke preset</button>
+        <button class="btn primary" id="edit-done">Selesai &amp; simpan</button>
+        <input type="file" id="import-file" accept="application/json,.json" hidden>
+      </div>
+    </div>
+
+    <div id="banner" class="banner" role="status" hidden></div>
+
+    <main class="hub-main">
+      <div id="widget-grid" class="widget-grid"></div>
+    </main>
+  </div>
+
+  <section id="not-found" class="not-found card" hidden>
+    <h2>Dashboard tidak ditemukan</h2>
+    <p class="muted" id="not-found-text">Dashboard ini tidak ada atau sudah dihapus.</p>
+    <a class="btn primary" href="../">← Kembali ke Beranda</a>
+  </section>
+
+  <dialog id="settings" class="sheet">
+    <form id="settings-form" method="dialog" novalidate>
+      <h2>Pengaturan dashboard</h2>
+      <div class="form-grid">
+        <label class="field full"><span>Nama</span><input name="name" type="text" maxlength="40"></label>
+        <label class="field"><span>Ikon (emoji)</span><input name="icon" type="text" maxlength="4"></label>
+        <label class="field"><span>Device label utama</span><input name="device" type="text" spellcheck="false" autocapitalize="off"></label>
+        <label class="field"><span>Refresh nilai (detik)</span><input name="refreshS" type="number" min="1" max="600" step="1"></label>
+        <label class="field"><span>Refresh grafik/tabel (detik)</span><input name="historyS" type="number" min="5" max="3600" step="1"></label>
+        <label class="field full"><span>Status di Beranda: online jika data &lt; … detik</span><input name="onlineS" type="number" min="5" max="86400" step="1"></label>
+      </div>
+      <p class="hint">Ubidots STEM: 1 request/detik. Nilai terakhir = 1 request per device; grafik/tabel = 1 request per variabel.</p>
+      <fieldset class="field">
+        <legend>Tema warna (berlaku untuk semua dashboard)</legend>
+        <div class="swatches" id="theme-swatches"></div>
+      </fieldset>
+      <fieldset class="field">
+        <legend>Mode tampilan</legend>
+        <div class="segmented">
+          <label class="seg"><input type="radio" name="mode" value="dark"><span>🌙 Gelap</span></label>
+          <label class="seg"><input type="radio" name="mode" value="light"><span>☀️ Terang</span></label>
+        </div>
+      </fieldset>
+      <p id="settings-error" class="error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="submit" value="save" class="btn primary">Simpan</button>
+        <button type="submit" value="cancel" class="btn ghost">Batal</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="editor" class="sheet">
+    <form id="editor-form" method="dialog" novalidate>
+      <h2 id="editor-title">Widget</h2>
+      <div id="editor-fields"></div>
+      <p id="editor-error" class="error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="submit" value="save" class="btn primary">Simpan</button>
+        <button type="submit" value="cancel" class="btn ghost">Batal</button>
+      </div>
+    </form>
+  </dialog>
+
+  <datalist id="device-list"></datalist>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
