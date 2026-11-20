@@ -251,15 +251,15 @@ input[type="range"] {
 
 /* ---------- Kolom kiri: D-pad + speed ---------- */
 
-.drive { grid-template-rows: minmax(0, 1fr) auto; }
+.drive { grid-template-rows: minmax(0, 1fr) auto auto; }
 .pad-wrap { min-height: 0; display: grid; place-items: center; container-type: size; }
 .pad {
   width: min(100cqw, 100cqh);
   height: min(100cqw, 100cqh);
   display: grid;
   grid-template: repeat(3, 1fr) / repeat(3, 1fr);
-  gap: 6%;
-  grid-template-areas: ". up ." "left stop right" ". down .";
+  gap: 5%;
+  grid-template-areas: "ul up ur" "left stop right" "dl down dr";
 }
 .pad-btn {
   font: inherit;
@@ -279,6 +279,11 @@ input[type="range"] {
 .pad-btn.down { grid-area: down; }
 .pad-btn.left { grid-area: left; }
 .pad-btn.right { grid-area: right; }
+.pad-btn.ul { grid-area: ul; }
+.pad-btn.ur { grid-area: ur; }
+.pad-btn.dl { grid-area: dl; }
+.pad-btn.dr { grid-area: dr; }
+.pad-btn.diag { font-size: clamp(1rem, 7.5cqh, 2rem); border-radius: 50%; background: linear-gradient(180deg, var(--surface-2), var(--surface)); }
 .pad-btn.stop { grid-area: stop; font-size: clamp(1rem, 7cqh, 1.8rem); color: var(--critical-text); border-color: color-mix(in srgb, var(--critical) 50%, var(--border)); }
 .pad-btn.active {
   background: var(--accent);
@@ -288,10 +293,12 @@ input[type="range"] {
   transform: scale(0.96);
 }
 .slider-card { display: grid; gap: 2px; }
+.drive-state { text-align: center; font-family: var(--font-num); font-weight: 700; letter-spacing: 0.08em; color: var(--text-2); }
+.drive-state.moving { color: var(--accent); }
 
 /* ---------- Kolom tengah: suhu, grafik, web dosen ---------- */
 
-.monitor { grid-template-rows: auto minmax(0, 1fr) auto; }
+.monitor { grid-template-rows: auto minmax(0, 1fr) auto auto; }
 .temp { display: grid; gap: 0; transition: border-color 0.2s ease, background 0.2s ease; }
 .temp-val { display: flex; align-items: baseline; gap: 4px; line-height: 1; }
 .temp-val b { font-family: var(--font-num); font-size: clamp(1.9rem, 11vh, 3.4rem); font-weight: 700; }
@@ -317,7 +324,7 @@ input[type="range"] {
 .pill.bad { border-color: var(--critical); color: var(--critical-text); background: color-mix(in srgb, var(--critical) 16%, var(--surface)); }
 .pill.hot { border-color: var(--critical); background: var(--critical); color: #fff; animation: blink 1s steps(2, start) infinite; }
 
-.chart-card { position: relative; padding: 4px 6px 2px; }
+.chart-card { position: relative; padding: 4px 6px 2px; overflow: hidden; min-height: 70px; }
 .chart-card canvas { position: absolute; left: 6px; top: 4px; }
 
 .web { display: grid; gap: 4px; }
@@ -331,10 +338,12 @@ input[type="range"] {
 
 /* ---------- Kolom kanan: lengan, capit, stop ---------- */
 
-.arm { grid-template-rows: auto auto minmax(44px, 1fr); }
+.arm { grid-template-rows: minmax(0, 1fr) auto; }
 .servo { display: grid; gap: 4px; }
 .presets { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
-.btn.chip { min-height: clamp(34px, 9vh, 44px); padding: 4px 6px; font-size: 0.86rem; letter-spacing: 0.06em; }
+.presets.stack { grid-auto-flow: row; grid-auto-rows: 1fr; }
+.servo { align-content: start; }
+.btn.chip { min-height: clamp(38px, 12vh, 56px); padding: 4px 6px; font-size: clamp(0.86rem, 3.6vh, 1.05rem); letter-spacing: 0.06em; touch-action: manipulation; }
 .btn.chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 
 .estop {
@@ -349,7 +358,7 @@ input[type="range"] {
   box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.35), 0 6px 20px rgba(229, 72, 77, 0.35);
   cursor: pointer;
   touch-action: manipulation;
-  min-height: 44px;
+  min-height: clamp(44px, 13vh, 60px);
 }
 .estop:active, .estop.fired { transform: translateY(2px); background: #a50710; }
 
@@ -377,7 +386,8 @@ input[type="range"] {
   .app.portrait-ok .deck { grid-template-columns: 1fr; }
   .app.portrait-ok .pad-wrap { height: 62vw; }
   .app.portrait-ok .chart-card { height: 180px; }
-  .app.portrait-ok .arm { grid-template-rows: auto auto 64px; }
+  .app.portrait-ok .arm { grid-template-rows: auto auto; }
+  .app.portrait-ok .estop { min-height: 64px; }
   .brand { display: none; }
 }
 

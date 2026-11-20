@@ -9,7 +9,7 @@ Situsnya statis untuk GitHub Pages: tanpa backend dan tanpa build tool.
 | `/robot/` ([`robot/`](robot/)) | **Robot Phantom**: dashboard kontrol robot rescue (D-pad, STOP darurat, heartbeat) |
 | `/dash/?id=<id>` ([`dash/`](dash/)) | **Builder**: menampilkan & mengedit dashboard buatan sendiri |
 | [`shared/`](shared/) | Kode bersama: token, tema, API Ubidots + antrean request, sinkron cloud |
-| [`firmware/firmware.ino`](firmware/firmware.ino) | Firmware ESP32 robot Phantom |
+| [`firmware/`](firmware/) | Firmware ESP32 robot Phantom: `phantom_tes` (latihan) dan `phantom_lomba` (kirim ke web dosen) |
 
 Setelah GitHub Pages aktif:
 
@@ -122,7 +122,7 @@ mengembalikan widget bawaan.
 | `fb_code`       | robot → dashboard  | Kode HTTP kiriman terakhir ke web dosen (200 = berhasil)         |
 | `fb_jenis`      | robot → dashboard  | Jenis kiriman terakhir: 1 = data suhu + wifi, 2 = hotspot        |
 | `fb_suhu`       | robot → dashboard  | Suhu yang ikut dikirim ke web dosen                              |
-| `gerak`         | dashboard → robot  | 0 = stop, 1 = maju, 2 = mundur, 3 = kiri, 4 = kanan              |
+| `gerak`         | dashboard → robot  | 0 stop, 1 maju, 2 mundur, 3 putar kiri, 4 putar kanan, 5 maju-kiri, 6 maju-kanan, 7 mundur-kiri, 8 mundur-kanan |
 | `speed`         | dashboard → robot  | PWM 80–255                                                       |
 | `lengan`        | dashboard → robot  | Sudut servo lengan (derajat)                                     |
 | `capit`         | dashboard → robot  | Sudut servo capit (derajat)                                      |
@@ -147,15 +147,23 @@ Halaman `/robot/` dibuat untuk **HP landscape, satu layar tanpa scroll** (juga j
 Kalau HP dipegang tegak, muncul ajakan memutar HP (bisa dilewati dengan **Tetap pakai portrait**).
 Tombol **⛶** membuka layar penuh dan mengunci landscape (Chrome Android).
 
-- **Kiri:** D-pad. Tahan ▲▼◀▶ supaya robot berjalan, lepas untuk berhenti (`gerak=0`); ■ = stop.
-  Di bawahnya slider **SPEED** (PWM 80–255). Di laptop bisa pakai panah/WASD, **Spasi** = STOP darurat.
+Dibuat untuk **dua ibu jari**:
+
+- **Kiri (ibu jari kiri):** D-pad 8 arah. Tahan supaya robot berjalan, lepas untuk berhenti (`gerak=0`):
+  ▲ maju, ▼ mundur, ◀ / ▶ putar di tempat, ↖ ↗ ↙ ↘ belok melengkung. Menekan dua arah sekaligus
+  (misalnya ▲ + ▶) juga menjadi belok melengkung; ▲ + ▼ atau ◀ + ▶ mengikuti yang terakhir ditekan.
+  ■ = stop. Di bawahnya slider **SPEED** (PWM 80–255) dan teks arah yang sedang dikirim.
+  Di laptop bisa pakai panah/WASD (W+D = maju-kanan, dst.), **Spasi** = STOP darurat.
 - **Tengah:** **SUHU OBJEK** besar (hijau NORMAL, kuning MENDEKATI, merah 🔥 HOTSPOT saat ≥ batas),
-  grafik suhu dengan garis batas, dan kartu **WEB DOSEN**: status hotspot, isi kiriman terakhir
-  (misalnya `{"suhu":51.2,"wifi":true}` atau `{"hotspot":true}`) beserta hasilnya
-  (200 = berhasil, 401 = database dosen masih dikunci). Tombol **KIRIM HOTSPOT (cadangan)** hanya
-  aktif saat robot online dan suhu ≥ batas; pengiriman utama tetap otomatis dari robot.
-- **Kanan:** **LENGAN** (TURUN / BAWA / PARKIR + slider halus), **CAPIT** (BUKA / TUTUP + slider
-  halus), dan **STOP DARURAT** yang dikirim seketika tanpa antre.
+  grafik suhu dengan garis batas, kartu **WEB DOSEN** (status hotspot, isi kiriman terakhir seperti
+  `{"suhu":51.2,"wifi":true}` atau `{"hotspot":true}` beserta hasilnya: 200 = berhasil, 401 = database
+  dosen masih dikunci), dan **STOP DARURAT**. Tombol **KIRIM HOTSPOT (cadangan)** hanya aktif saat robot
+  online dan suhu ≥ batas; pengiriman utama tetap otomatis dari robot (program lomba).
+- **Kanan (ibu jari kanan):** **LENGAN** (TURUN / BAWA / PARKIR + slider) dan **CAPIT** (BUKA / TUTUP +
+  slider).
+
+Tombol STOP, ■, dan preset servo langsung bereaksi saat disentuh, jadi tetap jalan walaupun ibu jari
+lain sedang menahan D-pad.
 
 **Pengaturan (⚙):** device label, interval baca data (default 3 detik), batas hotspot (default
 50 °C, ikut dikirim ke robot sebagai `batas_suhu`), sudut tombol TURUN/BAWA/PARKIR/BUKA/TUTUP dan
@@ -168,7 +176,7 @@ batas min/max slider, tema warna, mode Gelap/Terang, token, dan logout. Semua te
 - Semua request lewat antrean dengan jarak minimal 1,1 detik; nilai slider digabung (hanya nilai
   terakhir yang dikirim).
 - Selama tombol gerak ditahan, polling dijeda dan `gerak` dikirim ulang tiap **1,5 detik** sebagai
-  heartbeat untuk failsafe firmware (motor berhenti sendiri setelah 2,5 detik tanpa perintah).
+  heartbeat untuk failsafe firmware (motor berhenti sendiri setelah 3 detik tanpa perintah).
 - Jika Ubidots membalas **HTTP 429**, dashboard menunggu otomatis (backoff 2 → 4 → 8 … maks. 60 detik).
 
 ## 10. Robot: tampilan lama
@@ -177,23 +185,28 @@ Mode Edit, kartu baterai, dan tombol kamera dari versi lama dihapus supaya layar
 layar HP. Versi lama masih ada di riwayat commit Git kalau diperlukan.
 
 
-## 11. Firmware ESP32
+## 11. Firmware ESP32 (dua program)
 
-**Board:** ESP32 DevKit V1 (Arduino IDE: *DOIT ESP32 DEVKIT V1*), core ESP32 2.x/3.x. Sudah diuji
-kompilasi di core 3.3.12 (flash terpakai ±87%; pakai *Partition Scheme → Huge APP* kalau fitur bertambah).
+**Board:** ESP32 Dev Module (Arduino IDE: *Tools → Board → ESP32 Dev Module*), core ESP32 3.x.
+Ada dua sketch, masing-masing di foldernya sendiri:
+
+| Sketch | Untuk | Isi |
+|--------|-------|-----|
+| [`firmware/phantom_tes/`](firmware/phantom_tes/) | **Tes / latihan** | Kontrol gerak 0–8, servo lengan & capit, MLX90614 ke dashboard, RTC DS3231, log microSD. Tanpa batas suhu dan tanpa kirim ke web dosen. |
+| [`firmware/phantom_lomba/`](firmware/phantom_lomba/) | **Lomba** | Semua isi program tes **+ kirim ke web dosen** (Firebase): data suhu tiap 5 detik dan hotspot saat suhu ≥ batas. |
+
+Keduanya sudah diuji kompilasi (`arduino-cli`, ESP32 Dev Module): tes ±77% flash, lomba ±85%.
 
 **Library** (Library Manager):
 
 - Ubidots MQTT for ESP32 and ESP8266 (`UbidotsESPMQTT.h`, versi ≥ 1.2) + PubSubClient
-- WiFiManager (tzapu)
 - ESP32Servo
-- Adafruit MLX90614
-- Adafruit SSD1306 + Adafruit GFX
+- Adafruit MLX90614 (+ Adafruit BusIO)
 - RTClib (Adafruit)
 
-> **Kalau muncul error `ESP8266WiFi.h: No such file or directory`:** versi library Ubidots kamu
-> hanya untuk ESP8266. Buka `Arduino/libraries/<ubidots-mqtt-esp>/src/UbidotsESPMQTT.h`, lalu ganti
-> baris `#include <ESP8266WiFi.h>` dengan:
+> **Kalau muncul error `ESP8266WiFi.h: No such file or directory`:** buka
+> `Arduino/libraries/<ubidots-mqtt-esp>/src/UbidotsESPMQTT.h`, lalu ganti baris
+> `#include <ESP8266WiFi.h>` dengan:
 >
 > ```cpp
 > #if defined(ESP32)
@@ -203,60 +216,73 @@ kompilasi di core 3.3.12 (flash terpakai ±87%; pakai *Partition Scheme → Huge
 > #endif
 > ```
 
-Isi `UBIDOTS_TOKEN` di bagian atas sketch. WiFi tidak perlu diisi (lihat bagian 6);
-`WIFI_SSID_DEFAULT` hanya opsional untuk percobaan pertama.
+**Kredensial (`secrets.h`):** repo ini publik, jadi token Ubidots, WiFi, dan alamat web dosen **tidak**
+ditulis di sketch. Di tiap folder sketch, salin `secrets.example.h` menjadi `secrets.h`, lalu isi:
 
-**Pin (ESP32 DevKit V1 30-pin)**. Pin strapping (0, 2, 12, 15) tidak dipakai; GPIO5 hanya dipakai sebagai CS microSD (pin SS bawaan VSPI, aman karena CS dalam keadaan HIGH saat boot). ADC hanya
-memakai ADC1 karena ADC2 mati saat WiFi aktif.
+```cpp
+#define SECRET_WIFI_SSID     "nama hotspot HP"
+#define SECRET_WIFI_PASS     "password hotspot HP"
+#define SECRET_UBIDOTS_TOKEN "BBUS-..."
+#define SECRET_FIREBASE_URL  "https://...firebasedatabase.app/missions/teamXX.json"   // hanya program lomba
+```
+
+`secrets.h` sudah masuk `.gitignore`, jadi tidak ikut ter-upload ke GitHub.
+
+**Pin (ESP32 30-pin)**. Pin strapping (0, 2, 12, 15) tidak dipakai; GPIO5 hanya dipakai sebagai CS
+microSD (pin SS bawaan VSPI, aman karena CS dalam keadaan HIGH saat boot).
 
 | Fungsi                   | GPIO |
 |--------------------------|------|
-| I2C SDA / SCL (MLX90614 0x5A, SSD1306 0x3C, DS3231 0x68 + EEPROM 0x57) | 21 / 22 |
+| I2C SDA / SCL (MLX90614 0x5A, DS3231 0x68 + EEPROM 0x57) | 21 / 22 |
 | microSD SCK / MISO / MOSI / CS | 18 / 19 / 23 / 5 |
-| L298N ENA (PWM kiri) / IN1 / IN2 | 32 / 33 / 25 |
-| L298N IN3 / IN4 / ENB (PWM kanan) | 26 / 27 / 13 |
+| L298N ENA (PWM kiri) / IN1 / IN2 | 25 / 26 / 27 |
+| L298N IN3 / IN4 / ENB (PWM kanan) | 32 / 33 / 4 |
 | Servo lengan / capit     | 16 / 17 |
-| ADC baterai motor / servo | 34 / 35 |
-| Tombol reset WiFi (ke GND) | 14 |
 
 Catatan wiring:
 
 - Lepas jumper ENA/ENB di L298N. Motor kiri diparalel ke OUT1/OUT2, motor kanan ke OUT3/OUT4.
-- Servo MG90S diberi daya dari baterai servo (4,8–6 V), bukan dari pin 3V3/5V ESP32.
+- Servo diberi daya dari baterai servo (4,8–6 V), bukan dari pin 3V3/5V ESP32.
   **Semua GND harus disatukan.**
-- Pembagi tegangan default 30 kΩ / 7,5 kΩ (modul sensor tegangan, maksimal ±15 V). Ubah
-  `BATT_*_R1/R2` kalau nilai resistor berbeda, dan `BATT_CAL` untuk kalibrasi dengan multimeter.
-- Kalau arah roda terbalik, ubah `MOTOR_KIRI_BALIK` / `MOTOR_KANAN_BALIK`. Sudut capit diatur di
-  `CAPIT_BUKA_DEG` / `CAPIT_TUTUP_DEG`.
+- Kalau arah roda terbalik, ubah `MOTOR_KIRI_BALIK` / `MOTOR_KANAN_BALIK`. Kalau belok melengkung
+  terlalu tajam/landai, ubah `CURVE_RATIO` (kecepatan roda sisi dalam, default 0,4).
+- Sudut servo dikirim langsung dari dashboard (derajat). Posisi awal saat menyala: lengan 135°
+  (PARKIR), capit 90° (TUTUP).
 
 **Fitur keamanan:**
 
 - Dashboard mengirim ulang `gerak` tiap 1,5 detik selama tombol ditahan (`HEARTBEAT_MS`). Motor
-  berhenti kalau heartbeat tidak datang lebih dari `FAILSAFE_TIMEOUT_MS` = 2,5 detik (1,5 detik +
-  toleransi jeda jaringan 1 detik), atau saat WiFi/MQTT putus.
-- Saat (re)connect, robot mengirim `gerak=0` sebelum subscribe, supaya nilai gerak lama tidak
-  membuat robot jalan sendiri.
+  berhenti kalau heartbeat tidak datang lebih dari `FAILSAFE_TIMEOUT_MS` = 3 detik (1,5 detik +
+  toleransi antrean request dan jaringan 1,5 detik), atau saat WiFi/MQTT putus.
+- Saat (re)connect, robot mengirim `gerak=0` (dan `kirim_hotspot=0` di program lomba) sebelum
+  subscribe, supaya nilai lama di Ubidots tidak membuat robot jalan atau mengirim hotspot sendiri.
 
-**Interval:** sensor dibaca tiap 1 detik (`SENSOR_INTERVAL_MS`, untuk OLED & log) dan dikirim ke
-Ubidots tiap **5 detik** (`PUBLISH_INTERVAL_MS`). Status "Robot online" di dashboard memakai ambang
-15 detik, jadi tetap hijau dengan interval ini.
+**Interval:** MLX90614 dibaca tiap 1 detik (untuk log microSD) dan `suhu_objek`/`suhu_ambient`
+dikirim ke Ubidots tiap **5 detik** (`PUBLISH_INTERVAL_MS`). **Log microSD** ditulis tiap detik ke
+`/phantom_tes.csv` atau `/phantom_lomba.csv` (`waktu,suhu_objek,suhu_ambient,gerak,speed,lengan,capit`,
+plus `fb_code` di program lomba). Kalau kartu tidak ada, robot tetap jalan tanpa log. Jam DS3231
+disinkronkan otomatis dari NTP (WIB) saat online.
 
-**OLED** menampilkan status WiFi/IP, suhu, kedua baterai, perintah gerak terakhir, jam, dan status SD.
-**Log microSD** ditulis ke `/phantom_log.csv` tiap detik
-(`waktu,suhu_objek,suhu_ambient,batt_motor,batt_servo,gerak`). Kalau kartu tidak ada, robot tetap
-jalan tanpa log. Jam DS3231 disinkronkan otomatis dari NTP (WIB) saat online.
+**Web dosen (hanya `phantom_lomba`):** robot mengirim `PATCH` JSON ke `SECRET_FIREBASE_URL`, sama
+seperti contoh kode dosen:
 
-## 12. Ganti WiFi lewat Phantom-Setup
+- tiap 5 detik: `{"suhu":xx.x,"wifi":true}`;
+- saat `suhu_objek` ≥ `batas_suhu` (default 50 °C, diatur dari ⚙ dashboard): `{"hotspot":true}`,
+  diulang tiap 5 detik sampai berhasil. Tombol **KIRIM HOTSPOT (cadangan)** di dashboard mengirim
+  `kirim_hotspot=1`; robot menolaknya (`fb_code=-3`) kalau suhu masih di bawah batas.
+- Hasil tiap kiriman dilaporkan ke Ubidots (`fb_code`, `fb_jenis`, `fb_suhu`, dan `hotspot=1`
+  setelah hotspot berhasil) dan tampil di kartu **WEB DOSEN**.
+- Pengiriman HTTPS berjalan di core ESP32 yang lain, jadi kontrol motor dan servo tidak tertahan saat
+  menunggu jawaban server.
 
-Mode setup aktif otomatis kalau robot gagal terhubung ke WiFi tersimpan selama lebih dari 15 detik.
-Bisa juga dipaksa dengan **menahan tombol reset WiFi (GPIO14) selama 3 detik**; cara ini menghapus
-WiFi yang tersimpan.
+## 12. WiFi: hanya lewat hotspot HP
 
-1. OLED menampilkan **MODE SETUP WIFI** beserta nama & password AP.
-2. Dari HP, sambungkan ke WiFi **`Phantom-Setup`** dengan password **`phantom123`**.
-3. Halaman portal biasanya terbuka otomatis. Kalau tidak, buka `http://192.168.4.1`.
-4. Pilih **Configure WiFi**, pilih SSID, isi password, lalu **Save**.
-5. Robot tersambung, dan WiFi baru tersimpan permanen (tetap ada setelah restart).
+Sesuai aturan lomba, robot **tidak pernah membuat WiFi/hotspot sendiri**. ESP32 hanya berjalan
+sebagai *station* (`WIFI_STA`) dan terhubung ke hotspot HP yang namanya ditulis di `secrets.h`.
 
-Selama mode setup atau tidak terhubung, motor selalu berhenti. Portal tertutup sendiri setelah
-3 menit; setelah itu robot mencoba WiFi tersimpan lagi.
+1. Nyalakan hotspot HP dengan nama & password yang sama dengan `SECRET_WIFI_SSID` / `SECRET_WIFI_PASS`.
+2. Nyalakan robot. Ia mencoba terhubung, dan mengulang tiap 10 detik kalau gagal.
+3. Buka Serial Monitor (115200) untuk melihat IP dan status MQTT/Firebase.
+
+Selama WiFi atau MQTT putus, motor selalu berhenti. Untuk mengganti hotspot, ubah `secrets.h` lalu
+upload ulang.

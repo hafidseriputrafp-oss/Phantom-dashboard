@@ -2,7 +2,8 @@
  * Phantom Kontrol — dashboard robot GARUDA, satu layar landscape untuk HP.
  *
  * Variabel Ubidots (device "phantom"):
- *   kirim dari dashboard : gerak (0 stop, 1 maju, 2 mundur, 3 kiri, 4 kanan), speed, lengan, capit,
+ *   kirim dari dashboard : gerak (0 stop, 1 maju, 2 mundur, 3 putar kiri, 4 putar kanan,
+ *                          5 maju-kiri, 6 maju-kanan, 7 mundur-kiri, 8 mundur-kanan), speed, lengan, capit,
  *                          batas_suhu, kirim_hotspot (1 = minta robot kirim hotspot ke web dosen)
  *   dibaca dari robot    : suhu_objek, hotspot (1 = hotspot sudah diterima web dosen),
  *                          fb_code (HTTP kiriman terakhir ke web dosen), fb_jenis (1 data, 2 hotspot), fb_suhu
@@ -45,7 +46,7 @@ const CHART_POINTS = 60;
 const WARM_MARGIN = 10;
 const PRIORITY = { poll: 1, control: 2, heartbeat: 3, urgent: 9 };
 const RETRYABLE = new Set(["ratelimit", "timeout", "network", "server"]);
-const DIR_NAMES = { 1: "MAJU", 2: "MUNDUR", 3: "KIRI", 4: "KANAN" };
+const DIR_NAMES = { 1: "MAJU", 2: "MUNDUR", 3: "PUTAR KIRI", 4: "PUTAR KANAN", 5: "MAJU-KIRI", 6: "MAJU-KANAN", 7: "MUNDUR-KIRI", 8: "MUNDUR-KANAN" };
 const KEY_DIRS = { arrowup: 1, w: 1, arrowdown: 2, s: 2, arrowleft: 3, a: 3, arrowright: 4, d: 4 };
 
 /* ---------- Penyimpanan ---------- */
@@ -95,7 +96,8 @@ const state = {
   pollTimer: null,
   polling: false,
   readMode: "v2",
-  drive: { dir: 0, timer: null, source: null },
+  drive: { dir: 0, timer: null },
+  inputs: new Map(),
   sendQ: {},
   chart: null,
   lastChartTs: 0,
@@ -370,33 +372,66 @@ async function sendUrgent(variable, value) {
 
 /* ---------- Gerak (tahan = jalan, lepas = berhenti) ---------- */
 
-function setPadActive(dir) {
-  document.querySelectorAll(".pad-btn[data-dir]").forEach((b) => b.classList.toggle("active", Number(b.dataset.dir) === dir));
+const DIR_VEC = { 1: [1, 0], 2: [-1, 0], 3: [0, -1], 4: [0, 1], 5: [1, -1], 6: [1, 1], 7: [-1, -1], 8: [-1, 1] };
+const VEC_DIR = { "1,0": 1, "-1,0": 2, "0,-1": 3, "0,1": 4, "1,-1": 5, "1,1": 6, "-1,-1": 7, "-1,1": 8 };
+
+function combineDirs() {
+  let v = 0;
+  let h = 0;
+  for (const dir of state.inputs.values()) {
+    const [dv, dh] = DIR_VEC[dir];
+    if (dv) v = dv;
+    if (dh) h = dh;
+  }
+  return VEC_DIR[`${v},${h}`] || 0;
 }
 
-function startDrive(dir, source) {
+function showDrive(dir) {
+  const held = new Set(state.inputs.values());
+  document.querySelectorAll(".pad-btn[data-dir]").forEach((b) => b.classList.toggle("active", held.has(Number(b.dataset.dir))));
+  const label = $("#drive-state");
+  label.textContent = `GERAK: ${DIR_NAMES[dir] || "STOP"}`;
+  label.classList.toggle("moving", dir > 0);
+}
+
+function applyDrive() {
+  const dir = combineDirs();
+  showDrive(dir);
   if (state.drive.dir === dir) return;
   clearInterval(state.drive.timer);
-  state.drive = { dir, source, timer: setInterval(() => send("gerak", dir, PRIORITY.heartbeat), HOLD_HEARTBEAT_MS) };
-  setPadActive(dir);
+  if (!dir) {
+    state.drive = { dir: 0, timer: null };
+    send("gerak", 0, PRIORITY.heartbeat);
+    schedulePoll(state.settings.pollInterval * 1000);
+    return;
+  }
+  state.drive = { dir, timer: setInterval(() => send("gerak", dir, PRIORITY.heartbeat), HOLD_HEARTBEAT_MS) };
   vibrate(15);
   send("gerak", dir, PRIORITY.heartbeat);
 }
 
-function stopDrive(source) {
-  if (!state.drive.dir) return;
-  if (source && state.drive.source !== source) return;
-  clearInterval(state.drive.timer);
-  state.drive = { dir: 0, timer: null, source: null };
-  setPadActive(0);
-  send("gerak", 0, PRIORITY.heartbeat);
-  schedulePoll(state.settings.pollInterval * 1000);
+function pressDir(source, dir) {
+  state.inputs.delete(source);
+  state.inputs.set(source, dir);
+  applyDrive();
+}
+
+function releaseDir(source) {
+  if (!state.inputs.delete(source)) return;
+  applyDrive();
+}
+
+function releaseAll() {
+  if (!state.inputs.size && !state.drive.dir) return;
+  state.inputs.clear();
+  applyDrive();
 }
 
 function emergencyStop() {
+  state.inputs.clear();
   clearInterval(state.drive.timer);
-  state.drive = { dir: 0, timer: null, source: null };
-  setPadActive(0);
+  state.drive = { dir: 0, timer: null };
+  showDrive(0);
   vibrate([60, 40, 60]);
   const btn = $("#estop");
   btn.classList.add("fired");
@@ -407,23 +442,33 @@ function emergencyStop() {
   toast("STOP DARURAT dikirim");
 }
 
+function onTap(el, fn) {
+  el.addEventListener("pointerdown", (e) => {
+    if (e.button > 0) return;
+    e.preventDefault();
+    fn(e);
+  });
+  el.addEventListener("click", (e) => {
+    if (e.detail === 0) fn(e);
+  });
+}
+
 function bindPad() {
   document.querySelectorAll(".pad-btn[data-dir]").forEach((b) => {
     const dir = Number(b.dataset.dir);
-    const id = `pad${dir}`;
     b.addEventListener("pointerdown", (e) => {
       e.preventDefault();
       try { b.setPointerCapture(e.pointerId); } catch {}
-      startDrive(dir, id);
+      pressDir(`p${e.pointerId}`, dir);
     });
-    const end = () => stopDrive(id);
+    const end = (e) => releaseDir(`p${e.pointerId}`);
     b.addEventListener("pointerup", end);
     b.addEventListener("pointercancel", end);
     b.addEventListener("lostpointercapture", end);
     b.addEventListener("contextmenu", (e) => e.preventDefault());
   });
-  $("#pad-stop").addEventListener("click", () => {
-    stopDrive();
+  onTap($("#pad-stop"), () => {
+    releaseAll();
     send("gerak", 0, PRIORITY.heartbeat);
     vibrate(30);
   });
@@ -482,7 +527,7 @@ function bindSliders() {
     input.addEventListener("change", () => sendSlider(v, true));
   }
   document.querySelectorAll(".presets [data-preset]").forEach((b) => {
-    b.addEventListener("click", () => {
+    onTap(b, () => {
       const servo = b.closest(".presets").dataset.servo;
       $(`#${servo}`).dataset.touched = "1";
       setSlider(servo, state.settings[servo][b.dataset.preset], true);
@@ -866,7 +911,7 @@ function applySettings() {
 /* ---------- Login ---------- */
 
 function showLogin() {
-  stopDrive();
+  releaseAll();
   $("#app").hidden = true;
   $("#login").hidden = false;
   $("#login-device").value = state.settings.device;
@@ -939,7 +984,7 @@ function typing(e) {
 
 function bindEvents() {
   $("#login-form").addEventListener("submit", handleLogin);
-  $("#estop").addEventListener("click", emergencyStop);
+  onTap($("#estop"), emergencyStop);
   $("#btn-settings").addEventListener("click", openSettings);
   $("#btn-full").addEventListener("click", toggleFullscreen);
   $("#logout").addEventListener("click", logout);
@@ -984,17 +1029,17 @@ function bindEvents() {
     const dir = KEY_DIRS[e.key.toLowerCase()];
     if (!dir) return;
     e.preventDefault();
-    if (!e.repeat) startDrive(dir, `key${dir}`);
+    if (!e.repeat) pressDir(`k${e.key.toLowerCase()}`, dir);
   });
   document.addEventListener("keyup", (e) => {
     const dir = KEY_DIRS[e.key.toLowerCase()];
-    if (dir) stopDrive(`key${dir}`);
+    if (dir) releaseDir(`k${e.key.toLowerCase()}`);
   });
 
-  window.addEventListener("blur", () => stopDrive());
+  window.addEventListener("blur", releaseAll);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
-      stopDrive();
+      releaseAll();
       clearTimeout(state.pollTimer);
     } else if (state.token && !$("#app").hidden) {
       poll();
