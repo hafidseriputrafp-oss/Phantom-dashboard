@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#070b12">
-  <title>Phantom Mission Control</title>
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Phantom Kontrol</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Rajdhani:wght@500;600;700&display=swap">
@@ -13,13 +14,13 @@
   <script src="app.js" defer></script>
 </head>
 <body>
+
   <section id="login" class="login" hidden>
     <form id="login-form" class="card login-card" autocomplete="off">
-      <div class="logo logo-lg">
+      <div class="logo">
         <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 3 6 10v13c0 11 7.6 19.4 18 22 10.4-2.6 18-11 18-22V10L24 3Z" fill="none" stroke="currentColor" stroke-width="3"/><path d="M14 25h7l3-7 4 13 3-6h3" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <div><strong>PHANTOM</strong><span>GARUDA Operation · Rescue Robot</span></div>
+        <div><strong>PHANTOM</strong><span>GARUDA Operation · Kontrol Robot</span></div>
       </div>
-      <p class="muted">Masukkan token Ubidots. Token hanya disimpan di browser ini (localStorage).</p>
       <label class="field">
         <span>Token Ubidots</span>
         <div class="with-btn">
@@ -36,103 +37,124 @@
     </form>
   </section>
 
-  <div id="app" hidden>
-    <header class="topbar">
-      <div class="logo">
-        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 3 6 10v13c0 11 7.6 19.4 18 22 10.4-2.6 18-11 18-22V10L24 3Z" fill="none" stroke="currentColor" stroke-width="3"/><path d="M14 25h7l3-7 4 13 3-6h3" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <div><strong>PHANTOM</strong><span>GARUDA Operation</span></div>
-      </div>
-      <div class="link-status" id="link-status" title="Aktivitas terakhir robot">
-        <span class="dot"></span><span id="robot-status">—</span>
-      </div>
-      <div class="clock" aria-label="Jam">
-        <span id="clock-time">--:--:--</span>
-        <small id="clock-date"></small>
-      </div>
-      <div class="top-actions">
-        <button class="btn ghost top-btn" id="edit-toggle" aria-pressed="false"><span aria-hidden="true">✎</span><span class="lbl">Edit Dashboard</span></button>
-        <button class="btn top-btn settings-btn" id="open-settings" aria-label="Pengaturan"><span aria-hidden="true">⚙</span><span class="lbl">Pengaturan</span></button>
-      </div>
+  <div id="rotate" class="rotate" hidden>
+    <div class="rotate-icon" aria-hidden="true">📱</div>
+    <p><strong>Putar HP ke landscape</strong><br><span class="muted">Semua kontrol muat satu layar tanpa scroll.</span></p>
+    <button type="button" class="btn ghost" id="rotate-skip">Tetap pakai portrait</button>
+  </div>
+
+  <div id="app" class="app" hidden>
+    <header class="bar">
+      <a class="icon-btn" href="../" aria-label="Kembali ke Beranda" title="Beranda">⌂</a>
+      <strong class="brand">PHANTOM</strong>
+      <div id="link" class="link offline" title="Data terakhir dari robot"><i></i><span id="link-text">—</span></div>
+      <div id="banner" class="banner" role="status" hidden></div>
+      <span id="clock" class="clock">--:--:--</span>
+      <button type="button" class="icon-btn" id="btn-full" aria-label="Layar penuh" title="Layar penuh">⛶</button>
+      <button type="button" class="icon-btn" id="btn-settings" aria-label="Pengaturan" title="Pengaturan">⚙</button>
     </header>
 
-    <div id="editbar" class="editbar" hidden>
-      <div class="editbar-text"><strong>MODE EDIT</strong> Klik kartu untuk mengubah, seret <span class="kbd">⠿</span> untuk mengurutkan.</div>
-      <div class="editbar-actions">
-        <button class="btn" id="add-sensor">+ Sensor</button>
-        <button class="btn" id="add-control">+ Kontrol</button>
-        <button class="btn ghost" id="export-config">Export JSON</button>
-        <button class="btn ghost" id="import-config">Import JSON</button>
-        <button class="btn ghost danger-text" id="reset-config">Reset default</button>
-        <button class="btn primary" id="edit-done">Selesai</button>
-        <input type="file" id="import-file" accept="application/json,.json" hidden>
-      </div>
-    </div>
-
-    <div id="alert-strip" class="alert-strip" role="alert" hidden></div>
-    <div id="banner" class="banner" role="status" hidden></div>
-
-    <main class="layout">
-      <section class="panel area-monitor">
-        <h2><span>Monitoring</span><small id="last-update" class="muted"></small></h2>
-        <div id="sensor-grid" class="sensor-grid"></div>
-      </section>
-
-      <section class="panel area-chart">
-        <h2><span>Grafik suhu</span></h2>
-        <div class="card chart-card">
-          <div class="chart-box"><canvas id="chart" aria-label="Grafik suhu realtime"></canvas></div>
-          <p id="chart-fallback" class="muted" hidden>Grafik tidak tersedia.</p>
+    <main class="deck">
+      <section class="col drive" aria-label="Gerak">
+        <div class="pad-wrap">
+          <div class="pad" id="pad">
+            <button type="button" class="pad-btn up" data-dir="1" aria-label="Maju">▲</button>
+            <button type="button" class="pad-btn left" data-dir="3" aria-label="Putar kiri">◀</button>
+            <button type="button" class="pad-btn stop" id="pad-stop" aria-label="Stop">■</button>
+            <button type="button" class="pad-btn right" data-dir="4" aria-label="Putar kanan">▶</button>
+            <button type="button" class="pad-btn down" data-dir="2" aria-label="Mundur">▼</button>
+          </div>
+        </div>
+        <div class="slider-card card">
+          <div class="row-head"><span>SPEED</span><output id="speed-out">—</output></div>
+          <input type="range" id="speed" data-var="speed" min="80" max="255" step="5" value="150" aria-label="Kecepatan motor (PWM)">
         </div>
       </section>
 
-      <section class="panel area-controls">
-        <h2><span>Kontrol</span></h2>
-        <div id="control-groups" class="control-groups"></div>
+      <section class="col monitor" aria-label="Monitoring">
+        <div class="temp card" id="temp-card">
+          <div class="row-head"><span>SUHU OBJEK</span><span id="temp-state" class="pill">—</span></div>
+          <div class="temp-val"><b id="temp-val">--.-</b><small>°C</small></div>
+          <div class="muted tiny" id="temp-sub">—</div>
+        </div>
+        <div class="chart-card card">
+          <canvas id="chart" aria-label="Grafik suhu objek"></canvas>
+          <p id="chart-fallback" class="muted tiny" hidden>Grafik tidak tersedia.</p>
+        </div>
+        <div class="web card" id="web-card">
+          <div class="row-head">
+            <span>WEB DOSEN</span>
+            <span id="web-hotspot" class="pill">HOTSPOT BELUM</span>
+          </div>
+          <div class="web-last tiny" id="web-last">Belum ada kiriman dari robot.</div>
+          <button type="button" class="btn mini" id="btn-hotspot" disabled>KIRIM HOTSPOT (cadangan)</button>
+        </div>
+      </section>
+
+      <section class="col arm" aria-label="Lengan dan capit">
+        <div class="servo card">
+          <div class="row-head"><span>LENGAN</span><output id="lengan-out">—</output></div>
+          <div class="presets" data-servo="lengan">
+            <button type="button" class="btn chip" data-preset="turun">TURUN</button>
+            <button type="button" class="btn chip" data-preset="bawa">BAWA</button>
+            <button type="button" class="btn chip" data-preset="parkir">PARKIR</button>
+          </div>
+          <input type="range" id="lengan" data-var="lengan" min="25" max="135" step="1" value="90" aria-label="Sudut lengan">
+        </div>
+        <div class="servo card">
+          <div class="row-head"><span>CAPIT</span><output id="capit-out">—</output></div>
+          <div class="presets" data-servo="capit">
+            <button type="button" class="btn chip" data-preset="buka">BUKA</button>
+            <button type="button" class="btn chip" data-preset="tutup">TUTUP</button>
+          </div>
+          <input type="range" id="capit" data-var="capit" min="40" max="150" step="1" value="90" aria-label="Sudut capit">
+        </div>
+        <button type="button" id="estop" class="estop"><span aria-hidden="true">⏻</span> STOP DARURAT</button>
       </section>
     </main>
-
-    <div class="estop-bar">
-      <div class="hazard">
-        <button id="estop" class="estop"><span class="estop-icon" aria-hidden="true">⏻</span> STOP DARURAT</button>
-      </div>
-    </div>
   </div>
-
-  <template id="camera-template">
-    <div class="card group camera-card" data-fixed="camera">
-      <h3><span class="group-icon" aria-hidden="true">◉</span> Kamera</h3>
-      <p class="muted" id="camera-info"></p>
-      <button class="btn primary big" id="open-camera">Buka Kamera ↗</button>
-    </div>
-  </template>
 
   <dialog id="settings" class="sheet">
     <form id="settings-form" method="dialog">
-      <h2>Pengaturan</h2>
-      <label class="field">
-        <span>Device label</span>
-        <input id="set-device" type="text" required spellcheck="false" autocapitalize="off">
-      </label>
-      <label class="field">
-        <span>IP / URL kamera ESP32-CAM</span>
-        <input id="set-camera" type="text" placeholder="192.168.1.50 atau http://192.168.1.50:81/stream" spellcheck="false" autocapitalize="off">
-      </label>
-      <label class="field">
-        <span>Interval polling sensor (detik)</span>
-        <input id="set-interval" type="number" min="1" max="120" step="0.5" required>
-        <small class="muted">Ubidots STEM membatasi 1 request/detik. Disarankan 3 detik atau lebih.</small>
-      </label>
+      <h2 tabindex="-1" autofocus>Pengaturan</h2>
+      <div class="grid2">
+        <label class="field"><span>Device label</span><input id="set-device" type="text" required spellcheck="false" autocapitalize="off"></label>
+        <label class="field"><span>Interval baca data (detik)</span><input id="set-interval" type="number" min="1" max="60" step="0.5" required></label>
+        <label class="field"><span>Batas hotspot (°C)</span><input id="set-batas" type="number" min="25" max="300" step="0.5" required></label>
+        <span class="field note muted">Batas ini juga dikirim ke robot (variabel <code>batas_suhu</code>).</span>
+      </div>
       <fieldset class="field">
-        <legend>Tema warna</legend>
-        <div class="swatches" id="theme-swatches"></div>
-      </fieldset>
-      <fieldset class="field">
-        <legend>Mode tampilan</legend>
-        <div class="segmented" id="mode-options">
-          <label class="seg"><input type="radio" name="mode" value="dark"><span>🌙 Gelap</span></label>
-          <label class="seg"><input type="radio" name="mode" value="light"><span>☀️ Terang</span></label>
+        <legend>Sudut lengan (°)</legend>
+        <div class="grid5">
+          <label><span>TURUN</span><input name="lengan-turun" type="number" min="0" max="180" required></label>
+          <label><span>BAWA</span><input name="lengan-bawa" type="number" min="0" max="180" required></label>
+          <label><span>PARKIR</span><input name="lengan-parkir" type="number" min="0" max="180" required></label>
+          <label><span>Slider min</span><input name="lengan-min" type="number" min="0" max="180" required></label>
+          <label><span>Slider max</span><input name="lengan-max" type="number" min="0" max="180" required></label>
         </div>
       </fieldset>
+      <fieldset class="field">
+        <legend>Sudut capit (°)</legend>
+        <div class="grid5">
+          <label><span>BUKA</span><input name="capit-buka" type="number" min="0" max="180" required></label>
+          <label><span>TUTUP</span><input name="capit-tutup" type="number" min="0" max="180" required></label>
+          <label><span>Slider min</span><input name="capit-min" type="number" min="0" max="180" required></label>
+          <label><span>Slider max</span><input name="capit-max" type="number" min="0" max="180" required></label>
+        </div>
+      </fieldset>
+      <div class="grid2">
+        <fieldset class="field">
+          <legend>Tema warna</legend>
+          <div class="swatches" id="theme-swatches"></div>
+        </fieldset>
+        <fieldset class="field">
+          <legend>Mode tampilan</legend>
+          <div class="segmented">
+            <label class="seg"><input type="radio" name="mode" value="dark"><span>🌙 Gelap</span></label>
+            <label class="seg"><input type="radio" name="mode" value="light"><span>☀️ Terang</span></label>
+          </div>
+        </fieldset>
+      </div>
       <label class="field">
         <span>Token Ubidots</span>
         <div class="with-btn">
@@ -140,24 +162,13 @@
           <button type="button" class="btn ghost" data-reveal="set-token">Lihat</button>
         </div>
       </label>
+      <p id="settings-error" class="error" role="alert" hidden></p>
       <div class="dialog-actions">
         <button type="submit" value="save" class="btn primary">Simpan</button>
         <button type="submit" value="cancel" class="btn ghost" formnovalidate>Batal</button>
       </div>
       <hr>
       <button type="button" id="logout" class="btn danger wide">Logout &amp; hapus token</button>
-    </form>
-  </dialog>
-
-  <dialog id="editor" class="sheet">
-    <form id="editor-form" method="dialog" novalidate>
-      <h2 id="editor-title">Ubah</h2>
-      <div id="editor-fields"></div>
-      <p id="editor-error" class="error" role="alert" hidden></p>
-      <div class="dialog-actions">
-        <button type="submit" value="save" class="btn primary">Simpan</button>
-        <button type="submit" value="cancel" class="btn ghost">Batal</button>
-      </div>
     </form>
   </dialog>
 

@@ -115,16 +115,19 @@ mengembalikan widget bawaan.
 2. Buat device dengan label **`phantom`**. Device juga dibuat otomatis saat robot pertama kali online.
 3. Pastikan variabel berikut ada di device (label harus sama persis):
 
-| Variabel       | Arah               | Isi                                               |
-|----------------|--------------------|---------------------------------------------------|
-| `suhu_objek`   | robot → dashboard  | Suhu objek MLX90614 (°C)                          |
-| `suhu_ambient` | robot → dashboard  | Suhu ambient MLX90614 (°C)                        |
-| `batt_motor`   | robot → dashboard  | Tegangan baterai motor (V)                        |
-| `batt_servo`   | robot → dashboard  | Tegangan baterai servo (V)                        |
-| `gerak`        | dashboard → robot  | 0 = stop, 1 = maju, 2 = mundur, 3 = kiri, 4 = kanan |
-| `speed`        | dashboard → robot  | PWM 0–255                                         |
-| `lengan`       | dashboard → robot  | Sudut servo lengan 0–180                          |
-| `capit`        | dashboard → robot  | 1 = buka, 0 = tutup                               |
+| Variabel        | Arah               | Isi                                                              |
+|-----------------|--------------------|------------------------------------------------------------------|
+| `suhu_objek`    | robot → dashboard  | Suhu objek MLX90614 (°C)                                         |
+| `hotspot`       | robot → dashboard  | 1 = hotspot sudah diterima web dosen (Firebase)                  |
+| `fb_code`       | robot → dashboard  | Kode HTTP kiriman terakhir ke web dosen (200 = berhasil)         |
+| `fb_jenis`      | robot → dashboard  | Jenis kiriman terakhir: 1 = data suhu + wifi, 2 = hotspot        |
+| `fb_suhu`       | robot → dashboard  | Suhu yang ikut dikirim ke web dosen                              |
+| `gerak`         | dashboard → robot  | 0 = stop, 1 = maju, 2 = mundur, 3 = kiri, 4 = kanan              |
+| `speed`         | dashboard → robot  | PWM 80–255                                                       |
+| `lengan`        | dashboard → robot  | Sudut servo lengan (derajat)                                     |
+| `capit`         | dashboard → robot  | Sudut servo capit (derajat)                                      |
+| `batas_suhu`    | dashboard → robot  | Batas suhu hotspot (°C), diatur di ⚙ Pengaturan                  |
+| `kirim_hotspot` | dashboard → robot  | 1 = minta robot kirim hotspot sekarang (tombol cadangan)         |
 
 Variabel sensor dibuat otomatis saat robot mengirim data. Variabel kontrol dibuat otomatis saat
 tombol di dashboard pertama kali ditekan. Sebaiknya kirim sekali setiap kontrol sebelum robot
@@ -140,80 +143,39 @@ dinyalakan, supaya subscribe MQTT langsung mendapat nilai.
 
 ## 9. Robot: menggunakan dashboard
 
-Tampilan desktop: monitoring + grafik suhu di atas, kartu kontrol (Gerak, Gripper, …) + kamera di
-bawah. Di HP semuanya tersusun 1 kolom.
+Halaman `/robot/` dibuat untuk **HP landscape, satu layar tanpa scroll** (juga jalan di laptop).
+Kalau HP dipegang tegak, muncul ajakan memutar HP (bisa dilewati dengan **Tetap pakai portrait**).
+Tombol **⛶** membuka layar penuh dan mengunci landscape (Chrome Android).
 
-- **Header:** logo, status robot (titik hijau berdenyut = online, kuning = tertunda, merah
-  berkedip = offline), jam, tombol **✎ Edit Dashboard** dan **⚙ Pengaturan**.
-- **Kartu sensor** menyala kuning/merah saat melewati ambang. `suhu_objek` di atas 35 °C membuat
-  kartu merah berkedip, muncul label **KORBAN TERDETEKSI**, dan ada strip peringatan di atas.
-- **Gerak:** tahan ▲▼◀▶ supaya robot berjalan, lalu lepas untuk berhenti (`gerak=0`). Di laptop
-  bisa pakai panah/WASD, dan **Spasi** = STOP darurat. Tombol **STOP DARURAT** selalu terlihat
-  (di bawah layar pada HP, kanan bawah pada desktop) dan langsung dikirim walau sedang antre/jeda.
-- **Kamera:** isi IP saja (misal `192.168.1.50`, otomatis dibuka ke `http://192.168.1.50:81/stream`)
-  atau URL lengkap. Stream dibuka di tab baru, bukan di-embed, karena halaman HTTPS tidak boleh
-  memuat video HTTP (*mixed content*). HP harus berada di jaringan yang sama dengan ESP32-CAM.
+- **Kiri:** D-pad. Tahan ▲▼◀▶ supaya robot berjalan, lepas untuk berhenti (`gerak=0`); ■ = stop.
+  Di bawahnya slider **SPEED** (PWM 80–255). Di laptop bisa pakai panah/WASD, **Spasi** = STOP darurat.
+- **Tengah:** **SUHU OBJEK** besar (hijau NORMAL, kuning MENDEKATI, merah 🔥 HOTSPOT saat ≥ batas),
+  grafik suhu dengan garis batas, dan kartu **WEB DOSEN**: status hotspot, isi kiriman terakhir
+  (misalnya `{"suhu":51.2,"wifi":true}` atau `{"hotspot":true}`) beserta hasilnya
+  (200 = berhasil, 401 = database dosen masih dikunci). Tombol **KIRIM HOTSPOT (cadangan)** hanya
+  aktif saat robot online dan suhu ≥ batas; pengiriman utama tetap otomatis dari robot.
+- **Kanan:** **LENGAN** (TURUN / BAWA / PARKIR + slider halus), **CAPIT** (BUKA / TUTUP + slider
+  halus), dan **STOP DARURAT** yang dikirim seketika tanpa antre.
 
-**Pengaturan (⚙):** device label, IP kamera, interval polling (default 3 detik), token, tema warna
-(Biru Garuda, Merah Rescue, Hijau Militer, Ungu Neon), dan mode Gelap/Terang. Pilihan tema langsung
-terlihat dan baru disimpan setelah **Simpan**.
+**Pengaturan (⚙):** device label, interval baca data (default 3 detik), batas hotspot (default
+50 °C, ikut dikirim ke robot sebagai `batas_suhu`), sudut tombol TURUN/BAWA/PARKIR/BUKA/TUTUP dan
+batas min/max slider, tema warna, mode Gelap/Terang, token, dan logout. Semua tersimpan di
+`localStorage` browser itu.
 
 ### Batas request Ubidots di dashboard robot
 
 - Semua variabel device dibaca dengan **1 request** (`GET /api/v2.0/devices/~phantom/variables/`).
-  Kalau endpoint itu tidak tersedia, dashboard beralih ke v1.6 (1 request per sensor, tetap antre).
-- Semua request lewat antrean dengan jarak minimal 1,1 detik. Perintah kontrol didahulukan dari
-  polling, dan nilai slider yang belum terkirim digabung (hanya nilai terakhir yang dikirim).
-- Selama tombol gerak ditahan, **polling sensor dijeda** dan nilai `gerak` dikirim ulang tiap
-  **1,5 detik** sebagai heartbeat untuk failsafe firmware.
-- STOP (`gerak=0`) dikirim seketika, tidak ikut antre.
-- Jika Ubidots membalas **HTTP 429**, dashboard menunggu otomatis (backoff 2 → 4 → 8 … maks.
-  60 detik), menampilkan hitung mundur, lalu mencoba lagi.
+- Semua request lewat antrean dengan jarak minimal 1,1 detik; nilai slider digabung (hanya nilai
+  terakhir yang dikirim).
+- Selama tombol gerak ditahan, polling dijeda dan `gerak` dikirim ulang tiap **1,5 detik** sebagai
+  heartbeat untuk failsafe firmware (motor berhenti sendiri setelah 2,5 detik tanpa perintah).
+- Jika Ubidots membalas **HTTP 429**, dashboard menunggu otomatis (backoff 2 → 4 → 8 … maks. 60 detik).
 
-> Kuota harian: robot mengirim 4 dot tiap 5 detik, dan menahan tombol gerak menambah 1 dot tiap
-> 1,5 detik. Perbesar `PUBLISH_INTERVAL_MS` (firmware) kalau kuota dot cepat habis.
+## 10. Robot: tampilan lama
 
-## 10. Robot: Mode Edit
+Mode Edit, kartu baterai, dan tombol kamera dari versi lama dihapus supaya layar kontrol muat satu
+layar HP. Versi lama masih ada di riwayat commit Git kalau diperlukan.
 
-Klik **✎ Edit Dashboard**:
-
-- **Klik kartu/kontrol** untuk mengubahnya, **✕** untuk menghapus, **+ Sensor / + Kontrol / + Tambah …**
-  untuk menambah.
-- **Seret ⠿** untuk mengurutkan kartu sensor, kontrol di dalam grup, atau seluruh grup (bisa dengan
-  mouse maupun jari).
-- Sensor: label, variabel Ubidots, satuan, desimal, ikon (emoji), warna, tampil di grafik, dan
-  daftar ambang (di atas/di bawah nilai, Waspada/Bahaya, catatan).
-- Kontrol: tipe (tombol/tahan/toggle/slider), grup (kartu), label, variabel, warna, nilai,
-  min/max/step, posisi D-pad, dan tombol keyboard.
-- Konfigurasi tersimpan di `localStorage` browser. **Export JSON** untuk backup atau dipindah ke
-  HP/laptop lain, **Import JSON** untuk memuatnya, **Reset default** untuk kembali ke bawaan.
-
-Konfigurasi bawaan ada di `DEFAULT_SENSORS` dan `DEFAULT_CONTROLS` di bagian atas `app.js`.
-Format JSON export sama dengan objek di array tersebut.
-
-**Contoh sensor** (sensor gas, kartu jadi merah di atas 400 ppm):
-
-```js
-{ label: "Gas", variable: "gas_ppm", unit: "ppm", decimals: 0, icon: "☁️", color: "#9085e9", chart: false,
-  thresholds: [{ above: 400, level: "danger", note: "Gas berbahaya" }] },
-```
-
-**Contoh kontrol** (lampu sorot on/off):
-
-```js
-{ type: "toggle", group: "Lampu", label: "Lampu sorot", variable: "lampu",
-  on: { label: "Nyala", value: 1 }, off: { label: "Mati", value: 0 }, value: 0 },
-```
-
-| type     | field khusus                                     | perilaku                                       |
-|----------|--------------------------------------------------|------------------------------------------------|
-| `button` | `value`, `pad`                                   | kirim `value` saat diklik                      |
-| `hold`   | `value`, `release`, `pad`, `key`                 | kirim `value` tiap 1,5 dtk selama ditahan, `release` saat dilepas |
-| `toggle` | `on {label,value}`, `off {label,value}`, `value` | dua pilihan, yang aktif disorot                |
-| `slider` | `min`, `max`, `step`, `value`, `unit`            | kirim nilai saat digeser                       |
-
-Semua kontrol memakai `group` (judul kartu) dan boleh memakai `color`. Untuk kontrol baru,
-jangan lupa tambahkan `ubidotsSubscribe(...)` dan penanganannya di `onMqttMessage()` pada firmware.
 
 ## 11. Firmware ESP32
 
