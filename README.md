@@ -235,8 +235,8 @@ microSD (pin SS bawaan VSPI, aman karena CS dalam keadaan HIGH saat boot).
 |--------------------------|------|
 | I2C SDA / SCL (MLX90614 0x5A, DS3231 0x68 + EEPROM 0x57) | 21 / 22 |
 | microSD SCK / MISO / MOSI / CS | 18 / 19 / 23 / 5 |
-| L298N ENA (PWM kiri) / IN1 / IN2 | 32 / 33 / 25 |
-| L298N IN3 / IN4 / ENB (PWM kanan) | 26 / 27 / 13 |
+| L298N ENA (PWM kiri) / IN1 / IN2 | 25 / 26 / 27 |
+| L298N IN3 / IN4 / ENB (PWM kanan) | 32 / 33 / 4 |
 | Servo lengan / capit     | 16 / 17 |
 
 Catatan wiring:

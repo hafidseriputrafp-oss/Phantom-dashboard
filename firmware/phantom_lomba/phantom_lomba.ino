@@ -27,12 +27,12 @@
 #define PIN_SD_MISO        19
 #define PIN_SD_MOSI        23
 #define PIN_SD_CS          5
-#define PIN_MOTOR_ENA      32   // L298N ENA -> PWM roda kiri
-#define PIN_MOTOR_IN1      33
-#define PIN_MOTOR_IN2      25
-#define PIN_MOTOR_IN3      26
-#define PIN_MOTOR_IN4      27
-#define PIN_MOTOR_ENB      13   // L298N ENB -> PWM roda kanan
+#define PIN_MOTOR_ENA      25   // L298N ENA -> PWM roda kiri
+#define PIN_MOTOR_IN1      26
+#define PIN_MOTOR_IN2      27
+#define PIN_MOTOR_IN3      32
+#define PIN_MOTOR_IN4      33
+#define PIN_MOTOR_ENB      4    // L298N ENB -> PWM roda kanan
 #define PIN_SERVO_LENGAN   16
 #define PIN_SERVO_CAPIT    17
 
@@ -125,9 +125,21 @@ unsigned long lastWifiAttemptMs = 0, lastMqttAttemptMs = 0, lastSensorMs = 0, la
 // =====================================================================
 void setMotor(ESP32PWM& pwm, uint8_t pinA, uint8_t pinB, int dir, uint8_t speed, bool invert) {
   if (invert) dir = -dir;
-  digitalWrite(pinA, dir > 0 ? HIGH : LOW);
-  digitalWrite(pinB, dir < 0 ? HIGH : LOW);
-  pwm.write(dir == 0 ? 0 : speed);
+  if (dir > 0) {
+    digitalWrite(pinA, HIGH);
+    digitalWrite(pinB, LOW);
+  } else if (dir < 0) {
+    digitalWrite(pinA, LOW);
+    digitalWrite(pinB, HIGH);
+  } else {
+    digitalWrite(pinA, LOW);
+    digitalWrite(pinB, LOW);
+  }
+  if (dir == 0) {
+    pwm.write(0);
+  } else {
+    pwm.write(speed);
+  }
 }
 
 void driveMotors(int kiri, int kanan, float skalaKiri, float skalaKanan) {
@@ -195,13 +207,22 @@ void readSensors() {
     lastMlxRetryMs = millis();
     mlxOk = mlx.begin(MLX90614_I2CADDR, &Wire);
   }
-  suhuObjek = mlxOk ? mlx.readObjectTempC() : NAN;
-  suhuAmbient = mlxOk ? mlx.readAmbientTempC() : NAN;
+  if (mlxOk) {
+    suhuObjek = mlx.readObjectTempC();
+    suhuAmbient = mlx.readAmbientTempC();
+  } else {
+    suhuObjek = NAN;
+    suhuAmbient = NAN;
+  }
 }
 
 void setupSensors() {
   mlxOk = mlx.begin(MLX90614_I2CADDR, &Wire);
-  Serial.printf("MLX90614: %s\n", mlxOk ? "OK" : "TIDAK ADA");
+  if (mlxOk) {
+    Serial.println("MLX90614: OK");
+  } else {
+    Serial.println("MLX90614: TIDAK ADA");
+  }
 }
 
 // =====================================================================
@@ -210,7 +231,11 @@ void setupSensors() {
 void setupRtc() {
   rtcOk = rtc.begin(&Wire);
   if (rtcOk && rtc.lostPower()) rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  Serial.printf("DS3231: %s\n", rtcOk ? "OK" : "TIDAK ADA");
+  if (rtcOk) {
+    Serial.println("DS3231: OK");
+  } else {
+    Serial.println("DS3231: TIDAK ADA");
+  }
 }
 
 void handleTimeSync() {
@@ -251,7 +276,11 @@ void setupSd() {
       sdOk = false;
     }
   }
-  Serial.printf("microSD: %s\n", sdOk ? "OK" : "TIDAK ADA (lanjut tanpa log)");
+  if (sdOk) {
+    Serial.println("microSD: OK");
+  } else {
+    Serial.println("microSD: TIDAK ADA (lanjut tanpa log)");
+  }
 }
 
 void logToSd() {
@@ -313,14 +342,23 @@ bool topicIs(const char* topic, const char* variable) {
 
 void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   char buf[16];
-  unsigned int n = length < sizeof(buf) - 1 ? length : sizeof(buf) - 1;
+  unsigned int n;
+  if (length < sizeof(buf) - 1) {
+    n = length;
+  } else {
+    n = sizeof(buf) - 1;
+  }
   memcpy(buf, payload, n);
   buf[n] = '\0';
   int value = (int)lroundf(atof(buf));
 
   if (topicIs(topic, VAR_GERAK)) {
     lastCommandMs = millis();
-    applyMove((value >= MOVE_STOP && value <= MOVE_MUNDUR_KANAN) ? (Move)value : MOVE_STOP);
+    if (value >= MOVE_STOP && value <= MOVE_MUNDUR_KANAN) {
+      applyMove((Move)value);
+    } else {
+      applyMove(MOVE_STOP);
+    }
   } else if (topicIs(topic, VAR_SPEED)) {
     currentSpeed = constrain(value, 0, 255);
     applyMove(currentMove);
@@ -439,7 +477,13 @@ void handleFirebase() {
     lastFbCode = r.code;
     bool ok = r.code >= 200 && r.code < 300;
     if (r.jenis == FB_HOTSPOT && ok) hotspotSent = true;
-    Serial.printf("Web dosen %s -> HTTP %d\n", r.jenis == FB_HOTSPOT ? "hotspot" : "data", r.code);
+    const char* jenisText;
+    if (r.jenis == FB_HOTSPOT) {
+      jenisText = "hotspot";
+    } else {
+      jenisText = "data";
+    }
+    Serial.printf("Web dosen %s -> HTTP %d\n", jenisText, r.code);
     publishFbResult(r);
   }
   if (WiFi.status() != WL_CONNECTED) return;
