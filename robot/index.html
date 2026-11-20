@@ -55,19 +55,10 @@
     </header>
 
     <main class="deck">
-      <section class="col drive" aria-label="Gerak (ibu jari kiri)">
-        <div class="pad-wrap">
-          <div class="pad" id="pad">
-            <button type="button" class="pad-btn diag ul" data-dir="5" aria-label="Maju belok kiri">↖</button>
-            <button type="button" class="pad-btn up" data-dir="1" aria-label="Maju">▲</button>
-            <button type="button" class="pad-btn diag ur" data-dir="6" aria-label="Maju belok kanan">↗</button>
-            <button type="button" class="pad-btn left" data-dir="3" aria-label="Putar kiri">◀</button>
-            <button type="button" class="pad-btn stop" id="pad-stop" aria-label="Stop">■</button>
-            <button type="button" class="pad-btn right" data-dir="4" aria-label="Putar kanan">▶</button>
-            <button type="button" class="pad-btn diag dl" data-dir="7" aria-label="Mundur belok kiri">↙</button>
-            <button type="button" class="pad-btn down" data-dir="2" aria-label="Mundur">▼</button>
-            <button type="button" class="pad-btn diag dr" data-dir="8" aria-label="Mundur belok kanan">↘</button>
-          </div>
+      <section class="col drive" aria-label="Maju mundur (ibu jari kiri)">
+        <div class="throttle">
+          <button type="button" class="pad-btn" data-dir="1" aria-label="Maju">▲<small>MAJU</small></button>
+          <button type="button" class="pad-btn" data-dir="2" aria-label="Mundur">▼<small>MUNDUR</small></button>
         </div>
         <div class="slider-card card">
           <div class="row-head"><span>SPEED</span><output id="speed-out">—</output></div>
@@ -97,10 +88,14 @@
         <button type="button" id="estop" class="estop"><span aria-hidden="true">⏻</span> STOP DARURAT</button>
       </section>
 
-      <section class="col arm" aria-label="Lengan dan capit (ibu jari kanan)">
+      <section class="col arm" aria-label="Belok dan servo (ibu jari kanan)">
+        <div class="steer">
+          <button type="button" class="pad-btn" data-dir="3" aria-label="Kiri">◀<small>KIRI</small></button>
+          <button type="button" class="pad-btn" data-dir="4" aria-label="Kanan">▶<small>KANAN</small></button>
+        </div>
         <div class="servo card">
           <div class="row-head"><span>LENGAN</span><output id="lengan-out">—</output></div>
-          <div class="presets stack" data-servo="lengan">
+          <div class="presets" data-servo="lengan">
             <button type="button" class="btn chip" data-preset="turun">TURUN</button>
             <button type="button" class="btn chip" data-preset="bawa">BAWA</button>
             <button type="button" class="btn chip" data-preset="parkir">PARKIR</button>

@@ -249,22 +249,22 @@ input[type="range"] {
 }
 .row-head output { font-family: var(--font-num); font-size: 1rem; letter-spacing: 0; color: var(--text); }
 
-/* ---------- Kolom kiri: D-pad + speed ---------- */
+/* ---------- Kolom kiri: maju/mundur + speed ---------- */
 
 .drive { grid-template-rows: minmax(0, 1fr) auto auto; }
-.pad-wrap { min-height: 0; display: grid; place-items: center; container-type: size; }
-.pad {
-  width: min(100cqw, 100cqh);
-  height: min(100cqw, 100cqh);
-  display: grid;
-  grid-template: repeat(3, 1fr) / repeat(3, 1fr);
-  gap: 5%;
-  grid-template-areas: "ul up ur" "left stop right" "dl down dr";
-}
+.throttle { display: grid; grid-template-rows: 1fr 1fr; gap: var(--gap); min-height: 0; }
+.steer { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); min-height: 0; }
 .pad-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 0;
   font: inherit;
-  font-size: clamp(1.2rem, 9cqh, 2.4rem);
-  border-radius: 14px;
+  font-size: clamp(1.6rem, 10vh, 2.8rem);
+  line-height: 1;
+  border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
   background: linear-gradient(180deg, var(--surface-3), var(--surface-2));
   color: var(--text);
@@ -275,23 +275,15 @@ input[type="range"] {
   -webkit-touch-callout: none;
   box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.25);
 }
-.pad-btn.up { grid-area: up; }
-.pad-btn.down { grid-area: down; }
-.pad-btn.left { grid-area: left; }
-.pad-btn.right { grid-area: right; }
-.pad-btn.ul { grid-area: ul; }
-.pad-btn.ur { grid-area: ur; }
-.pad-btn.dl { grid-area: dl; }
-.pad-btn.dr { grid-area: dr; }
-.pad-btn.diag { font-size: clamp(1rem, 7.5cqh, 2rem); border-radius: 50%; background: linear-gradient(180deg, var(--surface-2), var(--surface)); }
-.pad-btn.stop { grid-area: stop; font-size: clamp(1rem, 7cqh, 1.8rem); color: var(--critical-text); border-color: color-mix(in srgb, var(--critical) 50%, var(--border)); }
+.pad-btn small { font-size: clamp(0.7rem, 3.2vh, 0.95rem); font-weight: 700; letter-spacing: 0.14em; color: var(--text-2); }
 .pad-btn.active {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--on-accent);
   box-shadow: 0 0 18px var(--accent-glow);
-  transform: scale(0.96);
+  transform: scale(0.97);
 }
+.pad-btn.active small { color: var(--on-accent); }
 .slider-card { display: grid; gap: 2px; }
 .drive-state { text-align: center; font-family: var(--font-num); font-weight: 700; letter-spacing: 0.08em; color: var(--text-2); }
 .drive-state.moving { color: var(--accent); }
@@ -338,12 +330,11 @@ input[type="range"] {
 
 /* ---------- Kolom kanan: lengan, capit, stop ---------- */
 
-.arm { grid-template-rows: minmax(0, 1fr) auto; }
+.arm { grid-template-rows: minmax(0, 1fr) auto auto; }
 .servo { display: grid; gap: 4px; }
-.presets { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
-.presets.stack { grid-auto-flow: row; grid-auto-rows: 1fr; }
+.presets { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
 .servo { align-content: start; }
-.btn.chip { min-height: clamp(38px, 12vh, 56px); padding: 4px 6px; font-size: clamp(0.86rem, 3.6vh, 1.05rem); letter-spacing: 0.06em; touch-action: manipulation; }
+.btn.chip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-height: clamp(32px, 10vh, 48px); padding: 4px 2px; font-size: clamp(0.86rem, 3.6vh, 1.05rem); letter-spacing: 0.06em; touch-action: manipulation; }
 .btn.chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 
 .estop {
@@ -384,9 +375,10 @@ input[type="range"] {
 @media (orientation: portrait) and (max-width: 760px) {
   .app.portrait-ok { height: auto; overflow: visible; }
   .app.portrait-ok .deck { grid-template-columns: 1fr; }
-  .app.portrait-ok .pad-wrap { height: 62vw; }
+  .app.portrait-ok .throttle { height: 56vw; }
+  .app.portrait-ok .steer { height: 30vw; }
   .app.portrait-ok .chart-card { height: 180px; }
-  .app.portrait-ok .arm { grid-template-rows: auto auto; }
+  .app.portrait-ok .arm { grid-template-rows: auto auto auto; }
   .app.portrait-ok .estop { min-height: 64px; }
   .brand { display: none; }
 }
@@ -401,6 +393,7 @@ input[type="range"] {
 
 @media (max-width: 700px) and (orientation: landscape) {
   .brand { display: none; }
+  .btn.chip { letter-spacing: 0; font-size: 0.82rem; }
 }
 
 /* ---------- Dialog ---------- */

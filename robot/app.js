@@ -38,6 +38,7 @@ const REQUEST_TIMEOUT_MS = 8000;
 const BACKOFF_START_MS = 2000;
 const BACKOFF_MAX_MS = 60000;
 const HOLD_HEARTBEAT_MS = 1500;
+const RELEASE_SETTLE_MS = 120;
 const SLIDER_THROTTLE_MS = 700;
 const ROBOT_ONLINE_MS = 15000;
 const ROBOT_LATE_MS = 60000;
@@ -98,6 +99,7 @@ const state = {
   readMode: "v2",
   drive: { dir: 0, timer: null },
   inputs: new Map(),
+  releaseTimer: null,
   sendQ: {},
   chart: null,
   lastChartTs: 0,
@@ -401,7 +403,7 @@ function applyDrive() {
   clearInterval(state.drive.timer);
   if (!dir) {
     state.drive = { dir: 0, timer: null };
-    send("gerak", 0, PRIORITY.heartbeat);
+    stopNow();
     schedulePoll(state.settings.pollInterval * 1000);
     return;
   }
@@ -410,7 +412,17 @@ function applyDrive() {
   send("gerak", dir, PRIORITY.heartbeat);
 }
 
+function stopNow() {
+  const q = state.sendQ.gerak;
+  if (q) {
+    q.value = 0;
+    q.has = false;
+  }
+  sendUrgent("gerak", 0);
+}
+
 function pressDir(source, dir) {
+  clearTimeout(state.releaseTimer);
   state.inputs.delete(source);
   state.inputs.set(source, dir);
   applyDrive();
@@ -418,16 +430,24 @@ function pressDir(source, dir) {
 
 function releaseDir(source) {
   if (!state.inputs.delete(source)) return;
-  applyDrive();
+  clearTimeout(state.releaseTimer);
+  if (!state.inputs.size) {
+    applyDrive();
+    return;
+  }
+  showDrive(state.drive.dir);
+  state.releaseTimer = setTimeout(applyDrive, RELEASE_SETTLE_MS);
 }
 
 function releaseAll() {
+  clearTimeout(state.releaseTimer);
   if (!state.inputs.size && !state.drive.dir) return;
   state.inputs.clear();
   applyDrive();
 }
 
 function emergencyStop() {
+  clearTimeout(state.releaseTimer);
   state.inputs.clear();
   clearInterval(state.drive.timer);
   state.drive = { dir: 0, timer: null };
@@ -437,7 +457,10 @@ function emergencyStop() {
   btn.classList.add("fired");
   setTimeout(() => btn.classList.remove("fired"), 300);
   const q = state.sendQ.gerak;
-  if (q) q.has = false;
+  if (q) {
+    q.value = 0;
+    q.has = false;
+  }
   sendUrgent("gerak", 0);
   toast("STOP DARURAT dikirim");
 }
@@ -466,11 +489,6 @@ function bindPad() {
     b.addEventListener("pointercancel", end);
     b.addEventListener("lostpointercapture", end);
     b.addEventListener("contextmenu", (e) => e.preventDefault());
-  });
-  onTap($("#pad-stop"), () => {
-    releaseAll();
-    send("gerak", 0, PRIORITY.heartbeat);
-    vibrate(30);
   });
 }
 
