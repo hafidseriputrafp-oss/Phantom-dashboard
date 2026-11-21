@@ -149,21 +149,30 @@ Tombol **⛶** membuka layar penuh dan mengunci landscape (Chrome Android).
 
 Dibuat untuk **dua ibu jari**:
 
-- **Kiri (ibu jari kiri):** D-pad 8 arah. Tahan supaya robot berjalan, lepas untuk berhenti (`gerak=0`):
-  ▲ maju, ▼ mundur, ◀ / ▶ putar di tempat, ↖ ↗ ↙ ↘ belok melengkung. Menekan dua arah sekaligus
-  (misalnya ▲ + ▶) juga menjadi belok melengkung; ▲ + ▼ atau ◀ + ▶ mengikuti yang terakhir ditekan.
-  ■ = stop. Di bawahnya slider **SPEED** (PWM 80–255) dan teks arah yang sedang dikirim.
+- **Kiri (ibu jari kiri):** tombol besar **▲ MAJU** dan **▼ MUNDUR**, di bawahnya slider **SPEED**
+  (PWM 80–255) dan teks arah yang sedang dikirim.
+- **Kanan (ibu jari kanan):** tombol besar **◀ KIRI** dan **▶ KANAN**, di bawahnya **LENGAN**
+  (TURUN / BAWA / PARKIR + slider) dan **CAPIT** (BUKA / TUTUP + slider).
+- Tahan tombol supaya robot bergerak, lepas untuk berhenti (`gerak=0`, dikirim seketika).
+  Kombinasi dua ibu jari:
+
+  | Kiri | Kanan | Gerak |
+  |------|-------|-------|
+  | ▲ | — | maju (1) |
+  | ▼ | — | mundur (2) |
+  | — | ◀ / ▶ | putar di tempat kiri / kanan (3 / 4) |
+  | ▲ | ◀ / ▶ | maju belok melengkung kiri / kanan (5 / 6) |
+  | ▼ | ◀ / ▶ | mundur belok melengkung kiri / kanan (7 / 8) |
+
   Di laptop bisa pakai panah/WASD (W+D = maju-kanan, dst.), **Spasi** = STOP darurat.
 - **Tengah:** **SUHU OBJEK** besar (hijau NORMAL, kuning MENDEKATI, merah 🔥 HOTSPOT saat ≥ batas),
   grafik suhu dengan garis batas, kartu **WEB DOSEN** (status hotspot, isi kiriman terakhir seperti
   `{"suhu":51.2,"wifi":true}` atau `{"hotspot":true}` beserta hasilnya: 200 = berhasil, 401 = database
   dosen masih dikunci), dan **STOP DARURAT**. Tombol **KIRIM HOTSPOT (cadangan)** hanya aktif saat robot
   online dan suhu ≥ batas; pengiriman utama tetap otomatis dari robot (program lomba).
-- **Kanan (ibu jari kanan):** **LENGAN** (TURUN / BAWA / PARKIR + slider) dan **CAPIT** (BUKA / TUTUP +
-  slider).
 
-Tombol STOP, ■, dan preset servo langsung bereaksi saat disentuh, jadi tetap jalan walaupun ibu jari
-lain sedang menahan D-pad.
+Tombol STOP dan preset servo langsung bereaksi saat disentuh, jadi tetap jalan walaupun ibu jari
+lain sedang menahan tombol gerak.
 
 **Pengaturan (⚙):** device label, interval baca data (default 3 detik), batas hotspot (default
 50 °C, ikut dikirim ke robot sebagai `batas_suhu`), sudut tombol TURUN/BAWA/PARKIR/BUKA/TUTUP dan
