@@ -466,6 +466,7 @@ function emergencyStop() {
 }
 
 function onTap(el, fn) {
+  if (!el) return;
   el.addEventListener("pointerdown", (e) => {
     if (e.button > 0) return;
     e.preventDefault();

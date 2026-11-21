@@ -23,6 +23,11 @@ Setelah GitHub Pages aktif:
 2. **Source**: *Deploy from a branch*. **Branch**: `main`, folder `/ (root)`, lalu **Save**.
 3. Setelah 1–2 menit situs bisa dibuka di `https://<username>.github.io/<nama-repo>/`.
 
+> **Setiap mengubah file CSS/JS**, naikkan angka `?v=` pada `<link>`/`<script>` di `index.html`,
+> `robot/index.html`, dan `dash/index.html`. GitHub Pages menyuruh browser menyimpan file sampai
+> 10 menit; tanpa angka versi baru, HP bisa memuat HTML baru dengan JavaScript lama sehingga
+> halaman tampil kosong.
+
 ## 2. Login & sinkron antar perangkat
 
 - **Token Ubidots tidak pernah disimpan di repo.** Token dimasukkan di halaman login dan disimpan
