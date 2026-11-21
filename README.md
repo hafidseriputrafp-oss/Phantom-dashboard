@@ -149,10 +149,10 @@ Tombol **⛶** membuka layar penuh dan mengunci landscape (Chrome Android).
 
 Dibuat untuk **dua ibu jari**:
 
-- **Kiri (ibu jari kiri):** tombol besar **▲ MAJU** dan **▼ MUNDUR**, di bawahnya slider **SPEED**
-  (PWM 80–255) dan teks arah yang sedang dikirim.
-- **Kanan (ibu jari kanan):** tombol besar **◀ KIRI** dan **▶ KANAN**, di bawahnya **LENGAN**
-  (TURUN / BAWA / PARKIR + slider) dan **CAPIT** (BUKA / TUTUP + slider).
+- **Kiri (ibu jari kiri):** slider **SPEED** (PWM 80–255) dan teks arah di atas; tombol besar
+  **▲ MAJU** dan **▼ MUNDUR** di pojok kiri bawah.
+- **Kanan (ibu jari kanan):** **LENGAN** (TURUN / BAWA / PARKIR + slider) dan **CAPIT** (BUKA / TUTUP +
+  slider) di atas; tombol besar **◀ KIRI** dan **▶ KANAN** di pojok kanan bawah.
 - Tahan tombol supaya robot bergerak, lepas untuk berhenti (`gerak=0`, dikirim seketika).
   Kombinasi dua ibu jari:
 
