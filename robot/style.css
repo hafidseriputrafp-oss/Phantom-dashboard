@@ -251,7 +251,7 @@ input[type="range"] {
 
 /* ---------- Kolom kiri: maju/mundur + speed ---------- */
 
-.drive { grid-template-rows: minmax(0, 1fr) auto auto; }
+.drive { grid-template-rows: auto auto minmax(0, 1fr); }
 .throttle { display: grid; grid-template-rows: 1fr 1fr; gap: var(--gap); min-height: 0; }
 .steer { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); min-height: 0; }
 .pad-btn {
@@ -330,7 +330,7 @@ input[type="range"] {
 
 /* ---------- Kolom kanan: lengan, capit, stop ---------- */
 
-.arm { grid-template-rows: minmax(0, 1fr) auto auto; }
+.arm { grid-template-rows: auto auto minmax(0, 1fr); }
 .servo { display: grid; gap: 4px; }
 .presets { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
 .servo { align-content: start; }

@@ -56,15 +56,15 @@
 
     <main class="deck">
       <section class="col drive" aria-label="Maju mundur (ibu jari kiri)">
-        <div class="throttle">
-          <button type="button" class="pad-btn" data-dir="1" aria-label="Maju">▲<small>MAJU</small></button>
-          <button type="button" class="pad-btn" data-dir="2" aria-label="Mundur">▼<small>MUNDUR</small></button>
-        </div>
         <div class="slider-card card">
           <div class="row-head"><span>SPEED</span><output id="speed-out">—</output></div>
           <input type="range" id="speed" data-var="speed" min="80" max="255" step="5" value="150" aria-label="Kecepatan motor (PWM)">
         </div>
         <div class="drive-state tiny" id="drive-state">GERAK: STOP</div>
+        <div class="throttle">
+          <button type="button" class="pad-btn" data-dir="1" aria-label="Maju">▲<small>MAJU</small></button>
+          <button type="button" class="pad-btn" data-dir="2" aria-label="Mundur">▼<small>MUNDUR</small></button>
+        </div>
       </section>
 
       <section class="col monitor" aria-label="Monitoring">
@@ -89,10 +89,6 @@
       </section>
 
       <section class="col arm" aria-label="Belok dan servo (ibu jari kanan)">
-        <div class="steer">
-          <button type="button" class="pad-btn" data-dir="3" aria-label="Kiri">◀<small>KIRI</small></button>
-          <button type="button" class="pad-btn" data-dir="4" aria-label="Kanan">▶<small>KANAN</small></button>
-        </div>
         <div class="servo card">
           <div class="row-head"><span>LENGAN</span><output id="lengan-out">—</output></div>
           <div class="presets" data-servo="lengan">
@@ -109,6 +105,10 @@
             <button type="button" class="btn chip" data-preset="tutup">TUTUP</button>
           </div>
           <input type="range" id="capit" data-var="capit" min="40" max="150" step="1" value="90" aria-label="Sudut capit">
+        </div>
+        <div class="steer">
+          <button type="button" class="pad-btn" data-dir="3" aria-label="Kiri">◀<small>KIRI</small></button>
+          <button type="button" class="pad-btn" data-dir="4" aria-label="Kanan">▶<small>KANAN</small></button>
         </div>
       </section>
     </main>
