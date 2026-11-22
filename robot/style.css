@@ -134,6 +134,9 @@ code { font-family: var(--font-num); font-size: 0.85em; }
 .field { display: flex; flex-direction: column; gap: 4px; margin: 0 0 12px; padding: 0; border: 0; min-width: 0; }
 .field > span, .field > legend { font-size: 0.9rem; font-weight: 600; color: var(--text-2); padding: 0; margin-bottom: 4px; }
 .field.note { display: block; align-self: end; font-weight: 500; font-size: 0.85rem; }
+.field.check { flex-direction: row; align-items: flex-start; gap: 10px; }
+.field.check input { width: 20px; height: 20px; min-height: 0; margin: 2px 0 0; flex: none; accent-color: var(--accent); }
+.field.check > span { margin: 0; }
 
 input[type="text"], input[type="password"], input[type="number"] {
   font: inherit;
@@ -208,6 +211,9 @@ input[type="range"] {
 .link.late i { background: var(--warning); }
 .link.offline { color: var(--critical-text); border-color: color-mix(in srgb, var(--critical) 55%, var(--border)); }
 .link.offline i { background: var(--critical); animation: blink 0.9s steps(2, start) infinite; }
+.net { font-family: var(--font-num); font-size: 0.75rem; color: var(--text-2); padding: 4px 8px; }
+.net.fast { color: var(--text); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
+.net.slow { color: var(--warning-text); border-color: var(--warning); }
 @keyframes ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 70%, transparent); } 100% { box-shadow: 0 0 0 8px transparent; } }
 @keyframes blink { to { visibility: hidden; } }
 
