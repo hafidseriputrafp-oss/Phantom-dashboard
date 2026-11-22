@@ -28,6 +28,7 @@ const DEFAULT_SETTINGS = {
   theme: "garuda",
   mode: "dark",
   batas: 50,
+  mqtt: true,
   lengan: { turun: 25, bawa: 60, parkir: 135, min: 25, max: 135 },
   capit: { buka: 118, tutup: 90, min: 40, max: 150 },
 };
@@ -39,13 +40,22 @@ const BACKOFF_START_MS = 2000;
 const BACKOFF_MAX_MS = 60000;
 const HOLD_HEARTBEAT_MS = 1500;
 const RELEASE_SETTLE_MS = 120;
+const TAP_MIN_MS = 250;
+const STOP_PARALLEL_MS = 600;
+const STOP_CONFIRM_MS = 1000;
+const POLL_RESUME_MS = 1500;
+const MQTT_LIB = "https://cdn.jsdelivr.net/npm/mqtt@5.16.1/dist/mqtt.min.js";
+const MQTT_LIB_SRI = "sha384-ilRYg/zm2XqUafLvBoGVk40UfNRnvUkYMy+e/JPo4YgsFR6X9Q3jYEkqFQXquX4r";
+const MQTT_URLS = ["wss://industrial.api.ubidots.com:8084/mqtt", "wss://industrial.api.ubidots.com:8084"];
+const MQTT_CONNECT_MS = 5000;
+const MQTT_ACK_MS = 1500;
 const SLIDER_THROTTLE_MS = 700;
 const ROBOT_ONLINE_MS = 15000;
 const ROBOT_LATE_MS = 60000;
 const STALE_MS = 20000;
 const CHART_POINTS = 60;
 const WARM_MARGIN = 10;
-const PRIORITY = { poll: 1, control: 2, heartbeat: 3, urgent: 9 };
+const PRIORITY = { poll: 1, control: 2 };
 const RETRYABLE = new Set(["ratelimit", "timeout", "network", "server"]);
 const DIR_NAMES = { 1: "MAJU", 2: "MUNDUR", 3: "PUTAR KIRI", 4: "PUTAR KANAN", 5: "MAJU-KIRI", 6: "MAJU-KANAN", 7: "MUNDUR-KIRI", 8: "MUNDUR-KANAN" };
 const KEY_DIRS = { arrowup: 1, w: 1, arrowdown: 2, s: 2, arrowleft: 3, a: 3, arrowright: 4, d: 4 };
@@ -84,6 +94,7 @@ function loadSettings() {
   s.pollInterval = Math.max(1, num(s.pollInterval, DEFAULT_SETTINGS.pollInterval));
   if (!THEMES.some((t) => t.id === s.theme)) s.theme = DEFAULT_SETTINGS.theme;
   if (s.mode !== "light") s.mode = "dark";
+  s.mqtt = saved.mqtt !== false;
   s.v = DEFAULT_SETTINGS.v;
   return s;
 }
@@ -97,7 +108,8 @@ const state = {
   pollTimer: null,
   polling: false,
   readMode: "v2",
-  drive: { dir: 0, timer: null },
+  drive: { dir: 0 },
+  net: { ms: null, path: "" },
   inputs: new Map(),
   releaseTimer: null,
   sendQ: {},
@@ -191,10 +203,6 @@ const limiter = {
   backoffUntil: 0,
   backoffMs: 0,
   run(fn, priority = PRIORITY.poll) {
-    if (priority >= PRIORITY.urgent) {
-      this.last = Date.now();
-      return fn();
-    }
     return new Promise((resolve, reject) => {
       this.queue.push({ fn, priority, resolve, reject, seq: this.seq++ });
       this.pump();
@@ -253,6 +261,157 @@ const deviceLabel = () => encodeURIComponent(state.settings.device);
 
 function postValues(values) {
   return api("POST", `/v1.6/devices/${deviceLabel()}/`, values);
+}
+
+/* ---------- Jalur cepat: MQTT over WebSocket langsung ke broker Ubidots ---------- */
+
+const fast = { client: null, ready: false, lib: null, urlIdx: 0, fails: 0, qos: 1, acked: false, ackMiss: 0, timer: null };
+
+function loadScript(src, integrity) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.integrity = integrity;
+    s.crossOrigin = "anonymous";
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.append(s);
+  });
+}
+
+function fastWanted() {
+  return Boolean(state.token && state.settings.mqtt && !$("#app").hidden && !document.hidden);
+}
+
+function fastStop() {
+  clearTimeout(fast.timer);
+  const c = fast.client;
+  fast.client = null;
+  fast.ready = false;
+  if (c) {
+    try { c.end(true); } catch {}
+  }
+  showNet();
+}
+
+function fastRetry() {
+  clearTimeout(fast.timer);
+  if (!fastWanted()) return;
+  fast.timer = setTimeout(fastStart, fast.fails < 4 ? 3000 : 30000);
+}
+
+async function fastStart() {
+  fastStop();
+  if (!fastWanted()) return;
+  try {
+    if (!window.mqtt) await (fast.lib || (fast.lib = loadScript(MQTT_LIB, MQTT_LIB_SRI)));
+  } catch {
+    fast.lib = null;
+    fast.fails++;
+    fastRetry();
+    return;
+  }
+  if (fast.client || !fastWanted()) return;
+  const url = MQTT_URLS[fast.urlIdx % MQTT_URLS.length];
+  let client;
+  try {
+    client = window.mqtt.connect(url, {
+      username: state.token,
+      password: "",
+      clientId: `phantom-web-${Math.random().toString(16).slice(2, 10)}`,
+      keepalive: 10,
+      reconnectPeriod: 0,
+      connectTimeout: MQTT_CONNECT_MS,
+      clean: true,
+    });
+  } catch {
+    fast.urlIdx++;
+    fast.fails++;
+    fastRetry();
+    return;
+  }
+  const down = () => {
+    if (fast.client !== client) return;
+    if (!fast.ready) fast.urlIdx++;
+    fast.fails++;
+    fastStop();
+    fastRetry();
+  };
+  fast.client = client;
+  fast.timer = setTimeout(down, MQTT_CONNECT_MS + 500);
+  client.on("connect", () => {
+    if (fast.client !== client) return;
+    clearTimeout(fast.timer);
+    fast.ready = true;
+    fast.fails = 0;
+    showNet();
+  });
+  client.on("error", down);
+  client.on("close", down);
+  client.on("offline", down);
+  showNet();
+}
+
+function fastPublish(values) {
+  return new Promise((resolve, reject) => {
+    const c = fast.client;
+    if (!fast.ready || !c) {
+      reject(new ApiError("network"));
+      return;
+    }
+    const qos = fast.qos;
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      fast.ackMiss++;
+      if (!fast.acked && fast.ackMiss >= 2) fast.qos = 0;
+      if (fast.client === c) {
+        fast.fails++;
+        fastStop();
+        fastRetry();
+      }
+      reject(new ApiError("timeout"));
+    }, MQTT_ACK_MS);
+    c.publish(`/v1.6/devices/${state.settings.device}`, JSON.stringify(values), { qos }, (err) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (err) {
+        reject(new ApiError("network"));
+        return;
+      }
+      if (qos) {
+        fast.acked = true;
+        fast.ackMiss = 0;
+      }
+      resolve(qos);
+    });
+  });
+}
+
+async function transmit(values) {
+  if (fast.ready) {
+    try {
+      return await fastPublish(values);
+    } catch {}
+  }
+  return postValues(values);
+}
+
+function showNet() {
+  const box = $("#net");
+  if (!box) return;
+  let path = "REST";
+  if (fast.ready) path = "MQTT";
+  else if (fast.client) path = "MQTT…";
+  const ms = state.net.path === path ? state.net.ms : null;
+  $("#net-text").textContent = ms === null ? path : `${path} ${ms} ms`;
+  box.classList.toggle("fast", fast.ready);
+  box.classList.toggle("slow", ms !== null && ms > 800);
+  box.title = fast.ready
+    ? "Perintah dikirim lewat MQTT WebSocket langsung ke broker Ubidots"
+    : "Perintah dikirim lewat REST API Ubidots";
 }
 
 const READ_VARS = ["suhu_objek", "hotspot", "fb_code", "fb_jenis", "fb_suhu", "speed", "lengan", "capit"];
@@ -332,12 +491,13 @@ async function flush(variable, q) {
   let tries = 0;
   while (q.has) {
     let sent = null;
+    const job = () => {
+      sent = q.value;
+      q.has = false;
+      return transmit({ [variable]: sent });
+    };
     try {
-      await limiter.run(() => {
-        sent = q.value;
-        q.has = false;
-        return postValues({ [variable]: sent });
-      }, q.priority);
+      await (fast.ready ? job() : limiter.run(job, q.priority));
       tries = 0;
     } catch (e) {
       if (RETRYABLE.has(e.kind) && ++tries < 4) {
@@ -356,20 +516,104 @@ async function flush(variable, q) {
   markPending(variable, false);
 }
 
-async function sendUrgent(variable, value) {
-  let lastErr;
-  for (let i = 0; i < 3; i++) {
+/* ---------- Kanal gerak: langsung kirim, berurutan, ketukan tidak hilang ---------- */
+
+const gerak = { queue: [], sent: 0, busy: false, sentAt: 0, dirAt: 0, confirmTimer: null, parallelTimer: null };
+
+async function deliverGerak(v) {
+  const t0 = performance.now();
+  if (fast.ready) {
     try {
-      await limiter.run(() => postValues({ [variable]: value }), PRIORITY.urgent);
-      return true;
-    } catch (e) {
-      lastErr = e;
-      if (e.kind === "auth") break;
-      await sleep(1200);
+      const qos = await fastPublish({ gerak: v });
+      state.net = { path: "MQTT", ms: qos ? Math.round(performance.now() - t0) : null };
+      showNet();
+      return;
+    } catch {}
+  }
+  limiter.last = Date.now();
+  await postValues({ gerak: v });
+  state.net = { path: "REST", ms: Math.round(performance.now() - t0) };
+  showNet();
+}
+
+function queueGerak(v) {
+  const q = gerak.queue;
+  const n = q.length;
+  const tail = n ? q[n - 1] : gerak.sent;
+  const before = n > 1 ? q[n - 2] : gerak.sent;
+  if (n && tail && v) q[n - 1] = v;
+  else if (n && !tail && v === before) q.pop();
+  else if (v !== tail) q.push(v);
+  const m = q.length;
+  if (m && q[m - 1] === (m > 1 ? q[m - 2] : gerak.sent)) q.pop();
+  while (q.length > 3) q.shift();
+  pumpGerak();
+}
+
+async function pumpGerak() {
+  if (gerak.busy) return;
+  gerak.busy = true;
+  while (gerak.queue.length) {
+    const v = gerak.queue[0];
+    if (!v) {
+      const wait = gerak.dirAt + TAP_MIN_MS - Date.now();
+      if (wait > 0) {
+        await sleep(wait);
+        continue;
+      }
+    }
+    gerak.queue.shift();
+    gerak.sent = v;
+    gerak.sentAt = Date.now();
+    if (v) gerak.dirAt = gerak.sentAt;
+    markPending("gerak", true);
+    for (let tries = 1; ; tries++) {
+      try {
+        await deliverGerak(v);
+        if (state.bannerKind === "ratelimit") setBanner("");
+        break;
+      } catch (e) {
+        const newer = gerak.queue.length > 0;
+        if (e.kind === "auth" || newer || tries >= (v ? 2 : 5)) {
+          if (!newer) toast(v ? `Gagal kirim gerak. ${errorText(e)}` : `STOP gagal terkirim! ${errorText(e)}`, true);
+          break;
+        }
+        if (e.kind === "ratelimit") setBanner(errorText(e), "ratelimit");
+        await sleep(400);
+      }
     }
   }
-  toast(`STOP gagal terkirim! ${errorText(lastErr)}`, true);
-  return false;
+  gerak.busy = false;
+  markPending("gerak", false);
+}
+
+function gerakHeartbeat() {
+  const dir = state.drive.dir;
+  if (!dir || gerak.busy || gerak.queue.length) return;
+  if (Date.now() - gerak.sentAt < HOLD_HEARTBEAT_MS) return;
+  gerak.queue.push(dir);
+  pumpGerak();
+}
+
+function clearStopGuards() {
+  clearTimeout(gerak.parallelTimer);
+  clearTimeout(gerak.confirmTimer);
+}
+
+function confirmStop() {
+  if (state.drive.dir) return;
+  if (gerak.busy || gerak.queue.length) {
+    gerak.confirmTimer = setTimeout(confirmStop, 300);
+    return;
+  }
+  gerak.queue.push(0);
+  pumpGerak();
+}
+
+function parallelStop() {
+  gerak.queue.length = 0;
+  gerak.queue.push(0);
+  deliverGerak(0).catch(() => {});
 }
 
 /* ---------- Gerak (tahan = jalan, lepas = berhenti) ---------- */
@@ -400,25 +644,23 @@ function applyDrive() {
   const dir = combineDirs();
   showDrive(dir);
   if (state.drive.dir === dir) return;
-  clearInterval(state.drive.timer);
+  state.drive = { dir };
   if (!dir) {
-    state.drive = { dir: 0, timer: null };
     stopNow();
-    schedulePoll(state.settings.pollInterval * 1000);
+    schedulePoll(POLL_RESUME_MS);
     return;
   }
-  state.drive = { dir, timer: setInterval(() => send("gerak", dir, PRIORITY.heartbeat), HOLD_HEARTBEAT_MS) };
+  clearStopGuards();
   vibrate(15);
-  send("gerak", dir, PRIORITY.heartbeat);
+  queueGerak(dir);
 }
 
 function stopNow() {
-  const q = state.sendQ.gerak;
-  if (q) {
-    q.value = 0;
-    q.has = false;
-  }
-  sendUrgent("gerak", 0);
+  clearStopGuards();
+  queueGerak(0);
+  gerak.parallelTimer = setTimeout(() => {
+    if (!state.drive.dir && gerak.busy && gerak.queue.includes(0)) parallelStop();
+  }, STOP_PARALLEL_MS);
 }
 
 function pressDir(source, dir) {
@@ -449,19 +691,19 @@ function releaseAll() {
 function emergencyStop() {
   clearTimeout(state.releaseTimer);
   state.inputs.clear();
-  clearInterval(state.drive.timer);
-  state.drive = { dir: 0, timer: null };
+  state.drive = { dir: 0 };
   showDrive(0);
   vibrate([60, 40, 60]);
   const btn = $("#estop");
   btn.classList.add("fired");
   setTimeout(() => btn.classList.remove("fired"), 300);
-  const q = state.sendQ.gerak;
-  if (q) {
-    q.value = 0;
-    q.has = false;
-  }
-  sendUrgent("gerak", 0);
+  clearStopGuards();
+  gerak.queue.length = 0;
+  gerak.dirAt = 0;
+  if (gerak.busy) parallelStop();
+  gerak.queue.push(0);
+  pumpGerak();
+  gerak.confirmTimer = setTimeout(confirmStop, STOP_CONFIRM_MS);
   toast("STOP DARURAT dikirim");
 }
 
@@ -773,7 +1015,8 @@ function schedulePoll(delay) {
 async function poll() {
   clearTimeout(state.pollTimer);
   if (!state.token || document.hidden || $("#app").hidden) return;
-  if (state.drive.dir) {
+  const driving = state.drive.dir || gerak.busy || gerak.queue.length || Date.now() - gerak.sentAt < POLL_RESUME_MS;
+  if (driving && !fast.ready) {
     schedulePoll(800);
     return;
   }
@@ -874,6 +1117,7 @@ function openSettings() {
   $("#set-device").value = s.device;
   $("#set-interval").value = s.pollInterval;
   $("#set-batas").value = s.batas;
+  $("#set-mqtt").checked = s.mqtt;
   for (const [servo, key] of ANGLE_FIELDS) form.elements[`${servo}-${key}`].value = s[servo][key];
   $("#set-token").value = state.token;
   $("#set-token").type = "password";
@@ -896,6 +1140,7 @@ function applySettings() {
     device,
     batas,
     pollInterval: Math.min(60, Math.max(1, num($("#set-interval").value, s.pollInterval))),
+    mqtt: $("#set-mqtt").checked,
     theme: form.elements.theme.value || s.theme,
     mode: form.elements.mode.value || s.mode,
     lengan: { ...s.lengan },
@@ -907,9 +1152,14 @@ function applySettings() {
   state.settings = next;
   saveSettings();
   const token = $("#set-token").value.trim();
-  if (token && token !== state.token) {
+  const tokenChanged = Boolean(token && token !== state.token);
+  if (tokenChanged) {
     state.token = token;
     store.set(KEY_TOKEN, token);
+  }
+  if (tokenChanged || next.mqtt !== s.mqtt) {
+    fast.fails = 0;
+    fastStart();
   }
   applySliderLimits();
   if (deviceChanged) {
@@ -932,6 +1182,7 @@ function applySettings() {
 function showLogin() {
   releaseAll();
   $("#app").hidden = true;
+  setTimeout(() => { if ($("#app").hidden) fastStop(); }, 1500);
   $("#login").hidden = false;
   $("#login-device").value = state.settings.device;
   $("#login-token").value = "";
@@ -952,6 +1203,8 @@ function showApp() {
   updateTemp();
   updateWeb();
   checkOrientation();
+  fast.fails = 0;
+  fastStart();
   poll().then(loadHistory);
 }
 
@@ -1060,11 +1313,17 @@ function bindEvents() {
     if (document.hidden) {
       releaseAll();
       clearTimeout(state.pollTimer);
+      setTimeout(() => { if (document.hidden) fastStop(); }, 2000);
     } else if (state.token && !$("#app").hidden) {
       poll();
+      if (!fast.client) fastStart();
     }
   });
-  window.addEventListener("online", () => { if (state.token) poll(); });
+  window.addEventListener("online", () => {
+    if (!state.token) return;
+    poll();
+    if (!fast.ready) fastStart();
+  });
   window.addEventListener("offline", () => setBanner(errorText({ kind: "offline" }), "offline"));
   window.addEventListener("resize", checkOrientation);
   document.addEventListener("fullscreenchange", () => {
@@ -1079,6 +1338,8 @@ function init() {
   bindEvents();
   tick();
   setInterval(tick, 1000);
+  setInterval(gerakHeartbeat, 200);
+  showNet();
   if (state.token) showApp();
   else showLogin();
 }

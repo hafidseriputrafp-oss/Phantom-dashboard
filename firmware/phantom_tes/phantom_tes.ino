@@ -276,6 +276,7 @@ void logToSd() {
 void setupWiFi() {
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);   // modem sleep mati: perintah gerak diterima tanpa jeda
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   lastWifiAttemptMs = millis();

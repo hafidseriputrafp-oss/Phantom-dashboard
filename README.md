@@ -159,7 +159,8 @@ Dibuat untuk **dua ibu jari**:
 - **Kanan (ibu jari kanan):** **LENGAN** (TURUN / BAWA / PARKIR + slider) dan **CAPIT** (BUKA / TUTUP +
   slider) di atas; tombol besar **◀ KIRI** dan **▶ KANAN** di pojok kanan bawah.
 - Tahan tombol supaya robot bergerak, lepas untuk berhenti (`gerak=0`, dikirim seketika).
-  Kombinasi dua ibu jari:
+  **Ketuk sekali** = robot bergerak sebentar (minimal 0,25 detik) lalu berhenti, jadi bisa dipakai
+  untuk menggeser posisi sedikit demi sedikit. Kombinasi dua ibu jari:
 
   | Kiri | Kanan | Gerak |
   |------|-------|-------|
@@ -180,18 +181,38 @@ Tombol STOP dan preset servo langsung bereaksi saat disentuh, jadi tetap jalan w
 lain sedang menahan tombol gerak.
 
 **Pengaturan (⚙):** device label, interval baca data (default 3 detik), batas hotspot (default
-50 °C, ikut dikirim ke robot sebagai `batas_suhu`), sudut tombol TURUN/BAWA/PARKIR/BUKA/TUTUP dan
-batas min/max slider, tema warna, mode Gelap/Terang, token, dan logout. Semua tersimpan di
-`localStorage` browser itu.
+50 °C, ikut dikirim ke robot sebagai `batas_suhu`), **Jalur cepat MQTT** (default aktif), sudut
+tombol TURUN/BAWA/PARKIR/BUKA/TUTUP dan batas min/max slider, tema warna, mode Gelap/Terang, token,
+dan logout. Semua tersimpan di `localStorage` browser itu.
+
+### Kecepatan respons perintah
+
+Jalur perintah selalu lewat internet: **HP → Ubidots → ESP32** (robot tidak pernah jadi hotspot).
+Supaya terasa secepat mungkin:
+
+- **Perintah gerak tidak antre.** Begitu tombol disentuh, `gerak` langsung dikirim (tidak menunggu
+  jeda 1,1 detik seperti request lain). Perintah dikirim **berurutan**, jadi `0` (berhenti) tidak
+  pernah mendahului arah, dan ketukan singkat tidak hilang.
+- **Jalur cepat MQTT:** dashboard tersambung langsung ke broker Ubidots lewat WebSocket
+  (`wss://industrial.api.ubidots.com:8084`, token sebagai username) dan mengirim perintah ke topik
+  `/v1.6/devices/phantom`, sama seperti robot. Kalau broker tidak bisa dihubungi, dashboard otomatis
+  memakai REST API dan mencoba MQTT lagi di latar belakang.
+- Di atas layar ada indikator jalur dan waktu respons perintah terakhir, misalnya `MQTT 120 ms` atau
+  `REST 450 ms` (kuning kalau > 800 ms). Pakai angka ini untuk mengecek sinyal hotspot HP.
+- Kalau jaringan macet lebih dari 0,6 detik saat tombol dilepas, `gerak=0` langsung dikirim secara
+  paralel (ketukan yang belum sempat terkirim dibuang), lalu sekali lagi setelah perintah sebelumnya
+  selesai, jadi robot pasti berhenti. **STOP DARURAT** selalu dikirim seketika dan diulang sekali.
 
 ### Batas request Ubidots di dashboard robot
 
 - Semua variabel device dibaca dengan **1 request** (`GET /api/v2.0/devices/~phantom/variables/`).
-- Semua request lewat antrean dengan jarak minimal 1,1 detik; nilai slider digabung (hanya nilai
-  terakhir yang dikirim).
-- Selama tombol gerak ditahan, polling dijeda dan `gerak` dikirim ulang tiap **1,5 detik** sebagai
-  heartbeat untuk failsafe firmware (motor berhenti sendiri setelah 3 detik tanpa perintah).
-- Jika Ubidots membalas **HTTP 429**, dashboard menunggu otomatis (backoff 2 → 4 → 8 … maks. 60 detik).
+- Request baca/servo lewat antrean dengan jarak minimal 1,1 detik; nilai slider digabung (hanya nilai
+  terakhir yang dikirim). Lewat MQTT, servo dan gerak tidak memakai kuota REST.
+- Saat memakai REST, polling dijeda selama menyetir sampai 1,5 detik setelah berhenti. `gerak` dikirim
+  ulang tiap **1,5 detik** selama tombol ditahan sebagai heartbeat untuk failsafe firmware (motor
+  berhenti sendiri setelah 3 detik tanpa perintah).
+- Jika Ubidots membalas **HTTP 429**, dashboard menunggu otomatis (backoff 2 → 4 → 8 … maks. 60 detik);
+  perintah berhenti tetap dicoba ulang sampai terkirim.
 
 ## 10. Robot: tampilan lama
 
@@ -268,6 +289,8 @@ Catatan wiring:
 - Dashboard mengirim ulang `gerak` tiap 1,5 detik selama tombol ditahan (`HEARTBEAT_MS`). Motor
   berhenti kalau heartbeat tidak datang lebih dari `FAILSAFE_TIMEOUT_MS` = 3 detik (1,5 detik +
   toleransi antrean request dan jaringan 1,5 detik), atau saat WiFi/MQTT putus.
+- WiFi *modem sleep* dimatikan (`WiFi.setSleep(false)`), supaya perintah dari Ubidots langsung
+  diterima tanpa jeda tidur radio. **Upload ulang firmware** setelah memperbarui dari repo ini.
 - Saat (re)connect, robot mengirim `gerak=0` (dan `kirim_hotspot=0` di program lomba) sebelum
   subscribe, supaya nilai lama di Ubidots tidak membuat robot jalan atau mengirim hotspot sendiri.
 
