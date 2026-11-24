@@ -211,6 +211,7 @@ input[type="range"] {
 .link.late i { background: var(--warning); }
 .link.offline { color: var(--critical-text); border-color: color-mix(in srgb, var(--critical) 55%, var(--border)); }
 .link.offline i { background: var(--critical); animation: blink 0.9s steps(2, start) infinite; }
+.icon-btn.nudge { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft), 0 0 12px var(--accent-glow); }
 .net { font-family: var(--font-num); font-size: 0.75rem; color: var(--text-2); padding: 4px 8px; }
 .net.fast { color: var(--text); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
 .net.slow { color: var(--warning-text); border-color: var(--warning); }
@@ -322,7 +323,7 @@ input[type="range"] {
 .pill.bad { border-color: var(--critical); color: var(--critical-text); background: color-mix(in srgb, var(--critical) 16%, var(--surface)); }
 .pill.hot { border-color: var(--critical); background: var(--critical); color: #fff; animation: blink 1s steps(2, start) infinite; }
 
-.chart-card { position: relative; padding: 4px 6px 2px; overflow: hidden; min-height: 70px; }
+.chart-card { position: relative; padding: 4px 6px 2px; overflow: hidden; min-height: 0; }
 .chart-card canvas { position: absolute; left: 6px; top: 4px; }
 
 .web { display: grid; gap: 4px; }
@@ -357,6 +358,7 @@ input[type="range"] {
   touch-action: manipulation;
   min-height: clamp(44px, 13vh, 60px);
 }
+.estop svg { width: 1.1em; height: 1.1em; vertical-align: -0.16em; }
 .estop:active, .estop.fired { transform: translateY(2px); background: #a50710; }
 
 .pending { opacity: 0.7; }
@@ -395,6 +397,19 @@ input[type="range"] {
   .icon-btn { height: 30px; width: 34px; }
   .web .btn.mini { min-height: 28px; }
   input[type="range"] { height: 26px; }
+}
+
+@media (max-height: 350px) {
+  .chart-card { display: none; }
+  .monitor { grid-template-rows: auto auto minmax(0, 1fr); }
+  .web-last { -webkit-line-clamp: 1; }
+  .card { padding: 4px 8px; }
+  input[type="range"] { height: 22px; }
+  .servo, .slider-card { grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 6px; row-gap: 2px; }
+  .servo .row-head, .slider-card .row-head { flex-direction: column; align-items: flex-start; gap: 0; letter-spacing: 0.04em; }
+  .servo input[type="range"] { grid-column: 1 / -1; }
+  .presets { gap: 4px; }
+  .btn.chip { min-height: 30px; padding: 4px 0; font-size: clamp(0.72rem, 1.7vw, 0.8rem); letter-spacing: 0; }
 }
 
 @media (max-width: 700px) and (orientation: landscape) {
@@ -437,9 +452,10 @@ input[type="range"] {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: max(12px, env(safe-area-inset-bottom));
+  top: calc(max(6px, env(safe-area-inset-top)) + 44px);
   transform: translateX(-50%);
   z-index: 70;
+  pointer-events: none;
   max-width: min(520px, calc(100vw - 24px));
   padding: 8px 14px;
   border-radius: 10px;

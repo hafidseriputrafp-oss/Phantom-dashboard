@@ -13,6 +13,7 @@ const API_BASE = "https://industrial.api.ubidots.com/api";
 const KEY_TOKEN = "phantom.token";
 const KEY_SETTINGS = "phantom.settings";
 const KEY_PORTRAIT = "phantom.portraitOk";
+const KEY_FULL_HINT = "phantom.fullHint";
 
 const THEMES = [
   { id: "garuda", label: "Biru Garuda", swatch: "#3b8eea" },
@@ -1071,6 +1072,20 @@ function checkOrientation() {
   const allowed = portraitAllowed();
   $("#app").classList.toggle("portrait-ok", allowed);
   $("#rotate").hidden = !(portraitPhone && !allowed && !$("#app").hidden);
+  checkFullscreenHint();
+}
+
+let fullHintShown = false;
+function checkFullscreenHint() {
+  const cramped = !$("#app").hidden && innerHeight < 350 && !document.fullscreenElement && Boolean(document.documentElement.requestFullscreen);
+  $("#btn-full").classList.toggle("nudge", cramped);
+  if (!cramped || fullHintShown) return;
+  fullHintShown = true;
+  try {
+    if (sessionStorage.getItem(KEY_FULL_HINT) === "1") return;
+    sessionStorage.setItem(KEY_FULL_HINT, "1");
+  } catch {}
+  toast("Tekan ⛶ untuk layar penuh — bilah alamat browser memakan tempat");
 }
 
 /* ---------- Tema & pengaturan ---------- */
@@ -1328,6 +1343,7 @@ function bindEvents() {
   window.addEventListener("resize", checkOrientation);
   document.addEventListener("fullscreenchange", () => {
     $("#btn-full").textContent = document.fullscreenElement ? "🗗" : "⛶";
+    checkFullscreenHint();
   });
 }
 

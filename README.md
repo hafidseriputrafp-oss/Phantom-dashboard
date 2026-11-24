@@ -152,6 +152,10 @@ Halaman `/robot/` dibuat untuk **HP landscape, satu layar tanpa scroll** (juga j
 Kalau HP dipegang tegak, muncul ajakan memutar HP (bisa dilewati dengan **Tetap pakai portrait**).
 Tombol **⛶** membuka layar penuh dan mengunci landscape (Chrome Android).
 
+Kalau bilah alamat browser masih terlihat, tinggi layar tinggal ±300 px. Dalam keadaan itu grafik
+disembunyikan, kartu SPEED/LENGAN/CAPIT dipadatkan supaya tombol gerak tetap besar, dan tombol **⛶**
+menyala sebagai pengingat. Tekan **⛶** agar semua bagian (termasuk grafik) tampil.
+
 Dibuat untuk **dua ibu jari**:
 
 - **Kiri (ibu jari kiri):** slider **SPEED** (PWM 80–255) dan teks arah di atas; tombol besar
