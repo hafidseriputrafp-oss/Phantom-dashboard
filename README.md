@@ -253,7 +253,7 @@ Ada dua sketch, masing-masing di foldernya sendiri:
 | [`firmware/phantom_tes/`](firmware/phantom_tes/) | **Tes / latihan** | Kontrol gerak 0–8, servo lengan & capit, MLX90614 ke dashboard, RTC DS3231, log microSD. Tanpa batas suhu dan tanpa kirim ke web dosen. |
 | [`firmware/phantom_lomba/`](firmware/phantom_lomba/) | **Lomba** | Semua isi program tes **+ kirim ke web dosen** (Firebase): data suhu tiap 5 detik dan hotspot saat suhu ≥ batas. |
 
-Keduanya sudah diuji kompilasi (`arduino-cli`, ESP32 Dev Module): tes ±77% flash, lomba ±85%.
+Keduanya sudah diuji kompilasi (`arduino-cli`, ESP32 Dev Module, core esp32 3.3.2): tes ±84% flash, lomba ±86%.
 
 **Library** (Library Manager):
 
@@ -354,3 +354,50 @@ sebagai *station* (`WIFI_STA`) dan terhubung ke hotspot HP yang namanya ditulis 
 
 Selama WiFi atau MQTT putus, motor selalu berhenti. Untuk mengganti hotspot, ubah `secrets.h` lalu
 upload ulang.
+
+## 13. Jalur kontrol EMQX (cepat) + Ubidots (telemetri)
+
+Perintah dan balasan robot lewat broker **EMQX Serverless (Singapura)** yang lebih dekat daripada
+Ubidots. **Ubidots tetap dipakai** untuk telemetri dan grafik (`suhu_objek`, `suhu_ambient`, `fb_code`,
+`fb_jenis`, `fb_suhu`, `hotspot`), juga sebagai jalur cadangan kontrol.
+
+| Pihak | Alamat | Akun |
+|-------|--------|------|
+| ESP32 | `ke187fc1.ala.asia-southeast1.emqxsl.com:8883` (MQTT TLS) | `robot` |
+| Dashboard | `wss://ke187fc1.ala.asia-southeast1.emqxsl.com:8084/mqtt` | `dashboard` |
+
+Topik (prefix `garuda13/phantom`):
+
+| Topik | Arah | Isi |
+|-------|------|-----|
+| `cmd/gerak`, `cmd/speed`, `cmd/lengan`, `cmd/capit`, `cmd/batas_suhu`, `cmd/kirim_hotspot` | dashboard → robot (QoS 1) | angka, mis. `1` |
+| `ack/gerak`, `ack/lengan`, `ack/capit` | robot → dashboard | nilai yang dijalankan (aturan sama dengan bagian 9) |
+| `status` | robot → dashboard (retained) | `online` saat tersambung, `offline` otomatis (LWT) saat robot hilang |
+
+**Mengisi password (tidak pernah ditulis di repo):**
+
+- **Robot:** di `secrets.h` tiap folder sketch isi
+  `#define SECRET_EMQX_USER "robot"` dan `#define SECRET_EMQX_PASS "password akun robot"`, lalu upload.
+- **Dashboard:** buka **⚙ Pengaturan → Jalur kontrol EMQX**, isi username `dashboard` dan password akun
+  dashboard, lalu **Simpan**. Password hanya tersimpan di browser itu (dihapus saat Logout). Kalau
+  password dikosongkan, dashboard memakai jalur Ubidots saja.
+
+**Cara kerja:**
+
+- Label di atas layar menunjukkan jalur yang dipakai: **`EMQX`** (hijau) atau **`Ubidots`**. Kalau EMQX
+  belum tersambung dalam 5 detik atau putus, perintah otomatis lewat Ubidots (MQTT, lalu REST), dan
+  EMQX dicoba lagi di latar. Status robot ONLINE/OFFLINE diambil dari topik `status` saat EMQX tersambung.
+- Robot memproses perintah dari EMQX dan Ubidots lewat fungsi yang sama (`prosesPerintah`). Balasan
+  dikirim lewat EMQX kalau tersambung. Perintah yang datang lewat Ubidots dibalas lewat Ubidots,
+  supaya status ✅ tetap muncul saat dashboard memakai jalur cadangan.
+- Koneksi EMQX di robot dibuat oleh task terpisah (core 0, dicoba tiap 3 detik), jadi handshake TLS
+  tidak pernah menahan `loop()`. Failsafe tetap jalan. Selama EMQX tersambung, putusnya Ubidots tidak
+  menghentikan motor.
+- Catatan teknis:
+  - Robot memakai `WiFiClientSecure::setInsecure()`: koneksi terenkripsi, tapi sertifikat server tidak
+    diverifikasi. Ini sederhana, namun kurang aman dibanding memasang sertifikat CA EMQX.
+  - PubSubClient hanya bisa publish QoS 0, jadi `ack/...` dan `status` dari robot dikirim QoS 0.
+    Perintah ke robot (subscribe) dan pesan LWT tetap QoS 1.
+- Serial Monitor menampilkan heap bebas tiap 10 detik (`DEBUG_HEAP = true`), untuk memastikan memori
+  cukup saat TLS EMQX dan TLS Firebase (program lomba) berjalan bersamaan. Ubah ke `false` kalau log
+  tidak diperlukan.

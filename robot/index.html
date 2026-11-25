@@ -10,9 +10,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Rajdhani:wght@500;600;700&display=swap">
-  <link rel="stylesheet" href="style.css?v=20261125">
+  <link rel="stylesheet" href="style.css?v=20261126">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js" defer></script>
-  <script src="app.js?v=20261125" defer></script>
+  <script src="app.js?v=20261126" defer></script>
 </head>
 <body>
 
@@ -127,6 +127,19 @@
         <label class="field"><span>Batas hotspot (°C)</span><input id="set-batas" type="number" min="25" max="300" step="0.5" required></label>
         <span class="field note muted">Batas ini juga dikirim ke robot (variabel <code>batas_suhu</code>).</span>
       </div>
+      <fieldset class="field">
+        <legend>Jalur kontrol EMQX (tercepat)</legend>
+        <div class="grid2">
+          <label class="field"><span>Username EMQX</span><input id="set-emqx-user" type="text" spellcheck="false" autocapitalize="off" autocomplete="off"></label>
+          <label class="field"><span>Password EMQX</span>
+            <div class="with-btn">
+              <input id="set-emqx-pass" type="password" spellcheck="false" autocapitalize="off" autocomplete="new-password" placeholder="password akun dashboard">
+              <button type="button" class="btn ghost" data-reveal="set-emqx-pass">Lihat</button>
+            </div>
+          </label>
+        </div>
+        <span class="note muted">Perintah & balasan robot lewat EMQX Singapura. Kosongkan password untuk memakai jalur Ubidots saja. Password hanya disimpan di browser ini.</span>
+      </fieldset>
       <label class="field check"><input id="set-mqtt" type="checkbox"><span>Jalur cepat MQTT (WebSocket langsung ke broker Ubidots). Jika gagal, otomatis pakai REST.</span></label>
       <fieldset class="field">
         <legend>Sudut lengan (°)</legend>

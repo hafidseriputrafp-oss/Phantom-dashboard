@@ -30,6 +30,8 @@ const DEFAULT_SETTINGS = {
   mode: "dark",
   batas: 50,
   mqtt: true,
+  emqxUser: "dashboard",
+  emqxPass: "",
   lengan: { turun: 25, bawa: 60, parkir: 135, min: 25, max: 135 },
   capit: { buka: 20, tutup: 110, min: 20, max: 110 },
 };
@@ -48,6 +50,8 @@ const POLL_RESUME_MS = 1500;
 const MQTT_LIB = "https://cdn.jsdelivr.net/npm/mqtt@5.16.1/dist/mqtt.min.js";
 const MQTT_LIB_SRI = "sha384-ilRYg/zm2XqUafLvBoGVk40UfNRnvUkYMy+e/JPo4YgsFR6X9Q3jYEkqFQXquX4r";
 const MQTT_URLS = ["wss://industrial.api.ubidots.com:8084/mqtt", "wss://industrial.api.ubidots.com:8084"];
+const EMQX_URL = "wss://ke187fc1.ala.asia-southeast1.emqxsl.com:8084/mqtt";
+const EMQX_PREFIX = "garuda13/phantom";
 const MQTT_CONNECT_MS = 5000;
 const MQTT_ACK_MS = 1500;
 const SLIDER_THROTTLE_MS = 700;
@@ -103,6 +107,8 @@ function loadSettings() {
   if (!THEMES.some((t) => t.id === s.theme)) s.theme = DEFAULT_SETTINGS.theme;
   if (s.mode !== "light") s.mode = "dark";
   s.mqtt = saved.mqtt !== false;
+  s.emqxUser = String(saved.emqxUser || DEFAULT_SETTINGS.emqxUser);
+  s.emqxPass = String(saved.emqxPass || "");
   s.v = DEFAULT_SETTINGS.v;
   return s;
 }
@@ -118,6 +124,7 @@ const state = {
   readMode: "v2",
   drive: { dir: 0 },
   net: { ms: null, path: "" },
+  robotLink: "",
   inputs: new Map(),
   releaseTimer: null,
   sendQ: {},
@@ -271,9 +278,7 @@ function postValues(values) {
   return api("POST", `/v1.6/devices/${deviceLabel()}/`, values);
 }
 
-/* ---------- Jalur cepat: MQTT over WebSocket langsung ke broker Ubidots ---------- */
-
-const fast = { client: null, ready: false, lib: null, urlIdx: 0, fails: 0, qos: 1, acked: false, ackMiss: 0, timer: null };
+/* ---------- Jalur kontrol MQTT: EMQX (utama) dan Ubidots (cadangan) ---------- */
 
 function loadScript(src, integrity) {
   return new Promise((resolve, reject) => {
@@ -287,116 +292,112 @@ function loadScript(src, integrity) {
   });
 }
 
-function fastWanted() {
-  return Boolean(state.token && state.settings.mqtt && !$("#app").hidden && !document.hidden);
+let mqttLib = null;
+function ensureMqttLib() {
+  if (window.mqtt) return Promise.resolve();
+  if (!mqttLib) mqttLib = loadScript(MQTT_LIB, MQTT_LIB_SRI).catch((e) => { mqttLib = null; throw e; });
+  return mqttLib;
 }
 
-function fastStop() {
-  clearTimeout(fast.timer);
-  const c = fast.client;
-  fast.client = null;
-  fast.ready = false;
-  if (c) {
-    try { c.end(true); } catch {}
-  }
-  showNet();
+function appActive() {
+  return Boolean(state.token && !$("#app").hidden && !document.hidden);
 }
 
-function fastRetry() {
-  clearTimeout(fast.timer);
-  if (!fastWanted()) return;
-  fast.timer = setTimeout(fastStart, fast.fails < 4 ? 3000 : 30000);
-}
+function makeBroker(cfg) {
+  const b = { label: cfg.label, client: null, ready: false, urlIdx: 0, fails: 0, qos: 1, acked: false, ackMiss: 0, timer: null };
 
-async function fastStart() {
-  fastStop();
-  if (!fastWanted()) return;
-  try {
-    if (!window.mqtt) await (fast.lib || (fast.lib = loadScript(MQTT_LIB, MQTT_LIB_SRI)));
-  } catch {
-    fast.lib = null;
-    fast.fails++;
-    fastRetry();
-    return;
-  }
-  if (fast.client || !fastWanted()) return;
-  const url = MQTT_URLS[fast.urlIdx % MQTT_URLS.length];
-  let client;
-  try {
-    client = window.mqtt.connect(url, {
-      username: state.token,
-      password: "",
-      clientId: `phantom-web-${Math.random().toString(16).slice(2, 10)}`,
-      keepalive: 10,
-      reconnectPeriod: 0,
-      connectTimeout: MQTT_CONNECT_MS,
-      clean: true,
-    });
-  } catch {
-    fast.urlIdx++;
-    fast.fails++;
-    fastRetry();
-    return;
-  }
-  const down = () => {
-    if (fast.client !== client) return;
-    if (!fast.ready) fast.urlIdx++;
-    fast.fails++;
-    fastStop();
-    fastRetry();
-  };
-  fast.client = client;
-  fast.timer = setTimeout(down, MQTT_CONNECT_MS + 500);
-  client.on("connect", () => {
-    if (fast.client !== client) return;
-    clearTimeout(fast.timer);
-    fast.ready = true;
-    fast.fails = 0;
-    const dev = state.settings.device;
-    try {
-      client.subscribe(Object.values(ACK_VARS).map((v) => `/v1.6/devices/${dev}/${v}/lv`), { qos: 0 }, () => {});
-    } catch {}
-    showNet();
-  });
-  client.on("message", (topic, payload) => {
-    if (fast.client !== client) return;
-    const label = String(topic).split("/")[4];
-    const variable = Object.keys(ACK_VARS).find((k) => ACK_VARS[k] === label);
-    const text = String(payload);
-    let value = Number(text);
-    if (Number.isNaN(value)) {
-      try { value = Number(JSON.parse(text).value); } catch {}
+  b.stop = () => {
+    clearTimeout(b.timer);
+    const c = b.client;
+    b.client = null;
+    b.ready = false;
+    if (c) {
+      try { c.end(true); } catch {}
     }
-    if (variable && Number.isFinite(value)) onAck(variable, Math.round(value));
-  });
-  client.on("error", down);
-  client.on("close", down);
-  client.on("offline", down);
-  showNet();
-}
+    showNet();
+  };
 
-function fastPublish(values) {
-  return new Promise((resolve, reject) => {
-    const c = fast.client;
-    if (!fast.ready || !c) {
-      reject(new ApiError("network"));
+  b.retry = () => {
+    clearTimeout(b.timer);
+    if (!cfg.wanted()) return;
+    b.timer = setTimeout(b.start, b.fails < 4 ? 3000 : 30000);
+  };
+
+  b.start = async () => {
+    b.stop();
+    if (!cfg.wanted()) return;
+    try {
+      await ensureMqttLib();
+    } catch {
+      b.fails++;
+      b.retry();
       return;
     }
-    const qos = fast.qos;
+    if (b.client || !cfg.wanted()) return;
+    const urls = cfg.urls();
+    const auth = cfg.auth();
+    let client;
+    try {
+      client = window.mqtt.connect(urls[b.urlIdx % urls.length], {
+        username: auth.username,
+        password: auth.password,
+        clientId: `phantom-web-${cfg.id}-${Math.random().toString(16).slice(2, 10)}`,
+        keepalive: 10,
+        reconnectPeriod: 0,
+        connectTimeout: MQTT_CONNECT_MS,
+        clean: true,
+      });
+    } catch {
+      b.urlIdx++;
+      b.fails++;
+      b.retry();
+      return;
+    }
+    const down = () => {
+      if (b.client !== client) return;
+      if (!b.ready) b.urlIdx++;
+      b.fails++;
+      b.stop();
+      if (cfg.onDown) cfg.onDown();
+      b.retry();
+    };
+    b.client = client;
+    b.timer = setTimeout(down, MQTT_CONNECT_MS + 500);
+    client.on("connect", () => {
+      if (b.client !== client) return;
+      clearTimeout(b.timer);
+      b.ready = true;
+      b.fails = 0;
+      try {
+        client.subscribe(cfg.topics(), { qos: cfg.subQos }, () => {});
+      } catch {}
+      showNet();
+    });
+    client.on("message", (topic, payload) => {
+      if (b.client === client) cfg.onMessage(String(topic), String(payload));
+    });
+    client.on("error", down);
+    client.on("close", down);
+    client.on("offline", down);
+    showNet();
+  };
+
+  const publishOne = (c, topic, payload) => new Promise((resolve, reject) => {
+    const qos = b.qos;
     let done = false;
     const timer = setTimeout(() => {
       if (done) return;
       done = true;
-      fast.ackMiss++;
-      if (!fast.acked && fast.ackMiss >= 2) fast.qos = 0;
-      if (fast.client === c) {
-        fast.fails++;
-        fastStop();
-        fastRetry();
+      b.ackMiss++;
+      if (!b.acked && b.ackMiss >= 2) b.qos = 0;
+      if (b.client === c) {
+        b.fails++;
+        b.stop();
+        b.retry();
       }
       reject(new ApiError("timeout"));
     }, MQTT_ACK_MS);
-    c.publish(`/v1.6/devices/${state.settings.device}`, JSON.stringify(values), { qos }, (err) => {
+    c.publish(topic, payload, { qos }, (err) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
@@ -405,38 +406,123 @@ function fastPublish(values) {
         return;
       }
       if (qos) {
-        fast.acked = true;
-        fast.ackMiss = 0;
+        b.acked = true;
+        b.ackMiss = 0;
       }
       resolve(qos);
     });
   });
+
+  b.publish = async (values) => {
+    const c = b.client;
+    if (!b.ready || !c) throw new ApiError("network");
+    let qos = 0;
+    for (const [topic, payload] of cfg.messages(values)) qos = await publishOne(c, topic, payload);
+    return qos;
+  };
+
+  return b;
+}
+
+function parseNum(text) {
+  let value = Number(text);
+  if (Number.isNaN(value)) {
+    try { value = Number(JSON.parse(text).value); } catch {}
+  }
+  return value;
+}
+
+const emqx = makeBroker({
+  label: "EMQX",
+  id: "emqx",
+  subQos: 1,
+  wanted: () => appActive() && Boolean(state.settings.emqxPass),
+  urls: () => [EMQX_URL],
+  auth: () => ({ username: state.settings.emqxUser || "dashboard", password: state.settings.emqxPass }),
+  topics: () => [`${EMQX_PREFIX}/ack/#`, `${EMQX_PREFIX}/status`],
+  messages: (values) => Object.entries(values).map(([k, v]) => [`${EMQX_PREFIX}/cmd/${k}`, String(v)]),
+  onMessage: (topic, text) => {
+    if (topic === `${EMQX_PREFIX}/status`) {
+      state.robotLink = text.trim().toLowerCase();
+      updateRobotStatus();
+      return;
+    }
+    const variable = topic.slice(`${EMQX_PREFIX}/ack/`.length);
+    const value = parseNum(text);
+    if (ACK_VARS[variable] && Number.isFinite(value)) onAck(variable, Math.round(value));
+  },
+  onDown: () => {
+    state.robotLink = "";
+    updateRobotStatus();
+  },
+});
+
+const ubi = makeBroker({
+  label: "Ubidots",
+  id: "ubi",
+  subQos: 0,
+  wanted: () => appActive() && state.settings.mqtt,
+  urls: () => MQTT_URLS,
+  auth: () => ({ username: state.token, password: "" }),
+  topics: () => Object.values(ACK_VARS).map((v) => `/v1.6/devices/${state.settings.device}/${v}/lv`),
+  messages: (values) => [[`/v1.6/devices/${state.settings.device}`, JSON.stringify(values)]],
+  onMessage: (topic, text) => {
+    const label = topic.split("/")[4];
+    const variable = Object.keys(ACK_VARS).find((k) => ACK_VARS[k] === label);
+    const value = parseNum(text);
+    if (variable && Number.isFinite(value)) onAck(variable, Math.round(value));
+  },
+});
+
+const BROKERS = [emqx, ubi];
+
+function anyMqtt() {
+  return emqx.ready || ubi.ready;
+}
+
+function startBrokers() {
+  for (const b of BROKERS) {
+    b.fails = 0;
+    b.start();
+  }
+}
+
+function stopBrokers() {
+  for (const b of BROKERS) b.stop();
 }
 
 async function transmit(values) {
-  if (fast.ready) {
+  for (const b of BROKERS) {
+    if (!b.ready) continue;
     try {
-      const qos = await fastPublish(values);
-      return { via: "mqtt", qos };
+      const qos = await b.publish(values);
+      return { via: "mqtt", path: b.label, qos };
     } catch {}
   }
   await postValues(values);
-  return { via: "rest" };
+  return { via: "rest", path: "Ubidots" };
 }
 
 function showNet() {
   const box = $("#net");
   if (!box) return;
-  let path = "REST";
-  if (fast.ready) path = "MQTT";
-  else if (fast.client) path = "MQTT…";
+  let path = "Ubidots";
+  let detail = "REST API Ubidots";
+  if (emqx.ready) {
+    path = "EMQX";
+    detail = "MQTT WebSocket ke broker EMQX (Singapura)";
+  } else if (ubi.ready) {
+    detail = "MQTT WebSocket ke broker Ubidots";
+  }
   const ms = state.net.path === path ? state.net.ms : null;
   $("#net-text").textContent = ms === null ? path : `${path} ${ms} ms`;
-  box.classList.toggle("fast", fast.ready);
+  box.classList.toggle("fast", anyMqtt());
+  box.classList.toggle("emqx", emqx.ready);
   box.classList.toggle("slow", ms !== null && ms > 800);
-  box.title = fast.ready
-    ? "Perintah dikirim lewat MQTT WebSocket langsung ke broker Ubidots"
-    : "Perintah dikirim lewat REST API Ubidots";
+  let title = `Perintah dikirim lewat ${detail}`;
+  if (!emqx.ready && !state.settings.emqxPass) title += ". Isi password EMQX di Pengaturan untuk jalur tercepat.";
+  else if (!emqx.ready) title += ". EMQX belum tersambung, dicoba ulang otomatis.";
+  box.title = title;
 }
 
 const READ_VARS = ["suhu_objek", "hotspot", "fb_code", "fb_jenis", "fb_suhu", "speed", "lengan", "capit"];
@@ -523,7 +609,7 @@ async function flush(variable, q) {
       return transmit({ [variable]: sent });
     };
     try {
-      const r = await (fast.ready ? job() : limiter.run(job, q.priority));
+      const r = await (anyMqtt() ? job() : limiter.run(job, q.priority));
       if (ACK_VARS[variable]) ackServer("servo", variable, sent, r);
       tries = 0;
     } catch (e) {
@@ -549,19 +635,13 @@ const gerak = { queue: [], sent: 0, busy: false, sentAt: 0, dirAt: 0, confirmTim
 
 async function deliverGerak(v) {
   const t0 = performance.now();
-  if (fast.ready) {
-    try {
-      const qos = await fastPublish({ gerak: v });
-      state.net = { path: "MQTT", ms: qos ? Math.round(performance.now() - t0) : null };
-      showNet();
-      return { via: "mqtt", qos };
-    } catch {}
-  }
-  limiter.last = Date.now();
-  await postValues({ gerak: v });
-  state.net = { path: "REST", ms: Math.round(performance.now() - t0) };
+  const r = await transmit({ gerak: v });
+  if (r.via === "rest") limiter.last = Date.now();
+  let ms = Math.round(performance.now() - t0);
+  if (r.via === "mqtt" && !r.qos) ms = null;
+  state.net = { path: r.path, ms };
   showNet();
-  return { via: "rest" };
+  return r;
 }
 
 function queueGerak(v) {
@@ -683,7 +763,7 @@ function ackRender(slot) {
 function ackBegin(slot, variable, value) {
   const a = acks[slot];
   clearTimeout(a.timer);
-  a.cycle = { variable, value, got: value, t0: performance.now(), stage: "sent", rest: !fast.ready, ms: 0 };
+  a.cycle = { variable, value, got: value, t0: performance.now(), stage: "sent", rest: !anyMqtt(), ms: 0 };
   if (variable !== "gerak") {
     const list = recentServo[variable];
     a.cycle.entry = { value, t: Date.now(), acked: false };
@@ -692,7 +772,7 @@ function ackBegin(slot, variable, value) {
   }
   if (variable === "gerak" && robotState.gerak === value && gerak.sent === value && !gerak.busy && !gerak.queue.length) {
     a.cycle.stage = "already";
-  } else if (fast.ready) {
+  } else if (anyMqtt()) {
     a.timer = setTimeout(() => {
       if (a.cycle && a.cycle.stage !== "done" && a.cycle.stage !== "already") {
         a.cycle.stage = "fail";
@@ -1027,6 +1107,14 @@ function updateRobotStatus() {
   const box = $("#link");
   const label = $("#link-text");
   box.classList.remove("online", "late", "offline");
+  if (emqx.ready && (state.robotLink === "online" || state.robotLink === "offline")) {
+    const on = state.robotLink === "online";
+    label.textContent = on ? "ONLINE" : "OFFLINE";
+    box.classList.add(on ? "online" : "offline");
+    box.title = "Status robot dari EMQX (garuda13/phantom/status)";
+    return;
+  }
+  box.title = "Data terakhir dari robot (Ubidots)";
   if (!state.lastSeen) {
     label.textContent = "BELUM ADA DATA";
     box.classList.add("offline");
@@ -1147,7 +1235,7 @@ async function poll() {
   clearTimeout(state.pollTimer);
   if (!state.token || document.hidden || $("#app").hidden) return;
   const driving = state.drive.dir || gerak.busy || gerak.queue.length || Date.now() - gerak.sentAt < POLL_RESUME_MS;
-  if (driving && !fast.ready) {
+  if (driving && !anyMqtt()) {
     schedulePoll(800);
     return;
   }
@@ -1264,6 +1352,9 @@ function openSettings() {
   $("#set-interval").value = s.pollInterval;
   $("#set-batas").value = s.batas;
   $("#set-mqtt").checked = s.mqtt;
+  $("#set-emqx-user").value = s.emqxUser;
+  $("#set-emqx-pass").value = s.emqxPass;
+  $("#set-emqx-pass").type = "password";
   for (const [servo, key] of ANGLE_FIELDS) form.elements[`${servo}-${key}`].value = s[servo][key];
   $("#set-token").value = state.token;
   $("#set-token").type = "password";
@@ -1287,6 +1378,8 @@ function applySettings() {
     batas,
     pollInterval: Math.min(60, Math.max(1, num($("#set-interval").value, s.pollInterval))),
     mqtt: $("#set-mqtt").checked,
+    emqxUser: $("#set-emqx-user").value.trim() || DEFAULT_SETTINGS.emqxUser,
+    emqxPass: $("#set-emqx-pass").value,
     theme: form.elements.theme.value || s.theme,
     mode: form.elements.mode.value || s.mode,
     lengan: { ...s.lengan },
@@ -1304,8 +1397,12 @@ function applySettings() {
     store.set(KEY_TOKEN, token);
   }
   if (tokenChanged || deviceChanged || next.mqtt !== s.mqtt) {
-    fast.fails = 0;
-    fastStart();
+    ubi.fails = 0;
+    ubi.start();
+  }
+  if (tokenChanged || next.emqxUser !== s.emqxUser || next.emqxPass !== s.emqxPass) {
+    emqx.fails = 0;
+    emqx.start();
   }
   applySliderLimits();
   if (deviceChanged) {
@@ -1328,7 +1425,7 @@ function applySettings() {
 function showLogin() {
   releaseAll();
   $("#app").hidden = true;
-  setTimeout(() => { if ($("#app").hidden) fastStop(); }, 1500);
+  setTimeout(() => { if ($("#app").hidden) stopBrokers(); }, 1500);
   $("#login").hidden = false;
   $("#login-device").value = state.settings.device;
   $("#login-token").value = "";
@@ -1349,8 +1446,7 @@ function showApp() {
   updateTemp();
   updateWeb();
   checkOrientation();
-  fast.fails = 0;
-  fastStart();
+  startBrokers();
   poll().then(loadHistory);
 }
 
@@ -1385,11 +1481,13 @@ async function handleLogin(e) {
 }
 
 function logout() {
-  if (!confirm("Logout dan hapus token Ubidots dari browser ini?")) return;
+  if (!confirm("Logout dan hapus token Ubidots + password EMQX dari browser ini?")) return;
   emergencyStop();
   clearTimeout(state.pollTimer);
   state.token = "";
   store.remove(KEY_TOKEN);
+  state.settings.emqxPass = "";
+  saveSettings();
   $("#settings").close();
   showLogin();
 }
@@ -1459,16 +1557,16 @@ function bindEvents() {
     if (document.hidden) {
       releaseAll();
       clearTimeout(state.pollTimer);
-      setTimeout(() => { if (document.hidden) fastStop(); }, 2000);
+      setTimeout(() => { if (document.hidden) stopBrokers(); }, 2000);
     } else if (state.token && !$("#app").hidden) {
       poll();
-      if (!fast.client) fastStart();
+      for (const b of BROKERS) if (!b.client) b.start();
     }
   });
   window.addEventListener("online", () => {
     if (!state.token) return;
     poll();
-    if (!fast.ready) fastStart();
+    for (const b of BROKERS) if (!b.ready) b.start();
   });
   window.addEventListener("offline", () => setBanner(errorText({ kind: "offline" }), "offline"));
   window.addEventListener("resize", checkOrientation);

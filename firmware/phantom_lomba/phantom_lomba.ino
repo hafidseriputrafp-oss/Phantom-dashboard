@@ -14,6 +14,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <PubSubClient.h>
 #include <UbidotsESPMQTT.h>
 #include <ESP32Servo.h>
 #include <Adafruit_MLX90614.h>
@@ -42,6 +43,8 @@ char DEVICE_LABEL[]  = "phantom";
 const char* WIFI_SSID = SECRET_WIFI_SSID;
 const char* WIFI_PASS = SECRET_WIFI_PASS;
 const char* FIREBASE_URL = SECRET_FIREBASE_URL;   // .../missions/teamXX.json
+const char* EMQX_USER = SECRET_EMQX_USER;
+const char* EMQX_PASS = SECRET_EMQX_PASS;
 
 // ---------- VARIABEL UBIDOTS ----------
 char VAR_GERAK[]        = "gerak";
@@ -59,6 +62,18 @@ char VAR_HOTSPOT[]      = "hotspot";
 char VAR_FB_CODE[]      = "fb_code";
 char VAR_FB_JENIS[]     = "fb_jenis";
 char VAR_FB_SUHU[]      = "fb_suhu";
+
+// ---------- EMQX (jalur kontrol cepat) ----------
+const char* EMQX_HOST       = "ke187fc1.ala.asia-southeast1.emqxsl.com";
+const uint16_t EMQX_PORT    = 8883;
+const char* EMQX_CLIENT_ID  = "garuda13-phantom-emqx";
+const char* EMQX_PREFIX_CMD = "garuda13/phantom/cmd/";
+const char* EMQX_SUB_CMD    = "garuda13/phantom/cmd/#";
+const char* EMQX_STATUS     = "garuda13/phantom/status";
+const uint16_t EMQX_KEEPALIVE_S = 15;
+const unsigned long EMQX_RETRY_MS = 3000;
+const bool DEBUG_HEAP = true;
+const unsigned long HEAP_LOG_MS = 10000;
 
 // ---------- PARAMETER ----------
 const unsigned long PUBLISH_INTERVAL_MS = 5000;   // kirim suhu ke Ubidots
@@ -97,6 +112,9 @@ const char* MOVE_NAMES[] = { "STOP", "MAJU", "MUNDUR", "PUTAR KIRI", "PUTAR KANA
 
 char MQTT_CLIENT[] = "garuda13-phantom";
 Ubidots ubidots(UBIDOTS_TOKEN, MQTT_CLIENT);
+WiFiClientSecure emqxNet;
+PubSubClient emqx(emqxNet);
+SemaphoreHandle_t emqxLock;
 Adafruit_MLX90614 mlx;
 RTC_DS3231 rtc;
 Servo servoLengan, servoCapit;
@@ -108,8 +126,23 @@ uint8_t currentSpeed = SPEED_DEFAULT;
 int lenganDeg = LENGAN_AWAL, capitDeg = CAPIT_AWAL;
 unsigned long lastCommandMs = 0;
 int lastCmdGerak = MOVE_STOP;
-bool ackGerakPending = false, ackLenganPending = false, ackCapitPending = false;
-int ackGerakValue = 0, ackLenganValue = 0, ackCapitValue = 0;
+struct Ack {
+  bool pending;
+  int value;
+  bool viaUbidots;
+  char* ubiVar;
+  const char* emqxTopic;
+};
+enum { ACK_GERAK = 0, ACK_LENGAN = 1, ACK_CAPIT = 2, ACK_JUMLAH = 3 };
+Ack acks[ACK_JUMLAH] = {
+  { false, 0, false, VAR_ACK_GERAK,  "garuda13/phantom/ack/gerak" },
+  { false, 0, false, VAR_ACK_LENGAN, "garuda13/phantom/ack/lengan" },
+  { false, 0, false, VAR_ACK_CAPIT,  "garuda13/phantom/ack/capit" },
+};
+const uint8_t ASAL_UBIDOTS = 0, ASAL_EMQX = 1;
+volatile bool emqxBaruTersambung = false;
+bool emqxAktif = false;
+unsigned long lastHeapLogMs = 0;
 float suhuObjek = NAN, suhuAmbient = NAN;
 float batasSuhu = BATAS_SUHU_DEFAULT;
 int lastFbCode = 0;
@@ -343,76 +376,175 @@ void handleWiFi() {
 // =====================================================================
 // UBIDOTS MQTT
 // =====================================================================
-bool topicIs(const char* topic, const char* variable) {
-  char suffix[40];
-  snprintf(suffix, sizeof(suffix), "/%s/lv", variable);
-  return strstr(topic, suffix) != nullptr;
+void tandaiAck(int idx, int v, bool viaUbidots) {
+  acks[idx].value = v;
+  acks[idx].viaUbidots = viaUbidots;
+  acks[idx].pending = true;
 }
 
-void tandaiAckGerak(int v) {
-  ackGerakValue = v;
-  ackGerakPending = true;
-}
-
-void terimaGerak(int value) {
+void terimaGerak(int value, bool viaUbidots) {
   lastCommandMs = millis();
   Move m = MOVE_STOP;
   if (value >= MOVE_STOP && value <= MOVE_MUNDUR_KANAN) m = (Move)value;
   bool berubah = m != currentMove || m != lastCmdGerak;
   lastCmdGerak = m;
   applyMove(m);
-  if (berubah) tandaiAckGerak(currentMove);
+  if (berubah) tandaiAck(ACK_GERAK, currentMove, viaUbidots);
 }
 
-void kirimAck() {
-  if (!ackGerakPending && !ackLenganPending && !ackCapitPending) return;
-  if (WiFi.status() != WL_CONNECTED || !ubidots.connected()) return;
-  if (ackGerakPending) ubidots.add(VAR_ACK_GERAK, ackGerakValue);
-  if (ackLenganPending) ubidots.add(VAR_ACK_LENGAN, ackLenganValue);
-  if (ackCapitPending) ubidots.add(VAR_ACK_CAPIT, ackCapitValue);
-  ubidots.ubidotsPublish(DEVICE_LABEL);
-  ackGerakPending = false;
-  ackLenganPending = false;
-  ackCapitPending = false;
+void prosesPerintah(const char* nama, const char* teks, uint8_t asal) {
+  int value = (int)lroundf(atof(teks));
+  bool viaUbidots = asal == ASAL_UBIDOTS;
+  if (strcmp(nama, VAR_GERAK) == 0) {
+    terimaGerak(value, viaUbidots);
+  } else if (strcmp(nama, VAR_SPEED) == 0) {
+    currentSpeed = constrain(value, 0, 255);
+    applyMove(currentMove);
+  } else if (strcmp(nama, VAR_LENGAN) == 0) {
+    setLengan(value);
+    tandaiAck(ACK_LENGAN, lenganDeg, viaUbidots);
+  } else if (strcmp(nama, VAR_CAPIT) == 0) {
+    setCapit(value);
+    tandaiAck(ACK_CAPIT, capitDeg, viaUbidots);
+  } else if (strcmp(nama, VAR_BATAS_SUHU) == 0) {
+    float b = atof(teks);
+    if (b > 0) batasSuhu = b;
+  } else if (strcmp(nama, VAR_KIRIM_HOTSPOT) == 0) {
+    if (value == 1) requestHotspot(true);
+  }
+  if (viaUbidots) {
+    Serial.printf("RX Ubidots %s = %d\n", nama, value);
+  } else {
+    Serial.printf("RX EMQX %s = %d\n", nama, value);
+  }
+}
+
+void salinPayload(byte* payload, unsigned int length, char* buf, size_t size) {
+  unsigned int n = length;
+  if (n > size - 1) n = size - 1;
+  memcpy(buf, payload, n);
+  buf[n] = '\0';
+}
+
+bool ambilNama(const char* topic, const char* awalan, const char* akhiran, char* out, size_t size) {
+  size_t la = strlen(awalan), lt = strlen(topic), lk = strlen(akhiran);
+  if (strncmp(topic, awalan, la) != 0 || lt < la + lk) return false;
+  if (lk > 0 && strcmp(topic + lt - lk, akhiran) != 0) return false;
+  size_t n = lt - la - lk;
+  if (n == 0 || n >= size) return false;
+  memcpy(out, topic + la, n);
+  out[n] = '\0';
+  return true;
 }
 
 void onMqttMessage(char* topic, byte* payload, unsigned int length) {
-  char buf[16];
-  unsigned int n;
-  if (length < sizeof(buf) - 1) {
-    n = length;
-  } else {
-    n = sizeof(buf) - 1;
-  }
-  memcpy(buf, payload, n);
-  buf[n] = '\0';
-  int value = (int)lroundf(atof(buf));
+  char awalan[40], nama[24], teks[16];
+  snprintf(awalan, sizeof(awalan), "/v1.6/devices/%s/", DEVICE_LABEL);
+  if (!ambilNama(topic, awalan, "/lv", nama, sizeof(nama))) return;
+  salinPayload(payload, length, teks, sizeof(teks));
+  prosesPerintah(nama, teks, ASAL_UBIDOTS);
+}
 
-  if (topicIs(topic, VAR_GERAK)) {
-    terimaGerak(value);
-  } else if (topicIs(topic, VAR_SPEED)) {
-    currentSpeed = constrain(value, 0, 255);
-    applyMove(currentMove);
-  } else if (topicIs(topic, VAR_LENGAN)) {
-    setLengan(value);
-    ackLenganValue = lenganDeg;
-    ackLenganPending = true;
-  } else if (topicIs(topic, VAR_CAPIT)) {
-    setCapit(value);
-    ackCapitValue = capitDeg;
-    ackCapitPending = true;
-  } else if (topicIs(topic, VAR_BATAS_SUHU)) {
-    float b = atof(buf);
-    if (b > 0) batasSuhu = b;
-  } else if (topicIs(topic, VAR_KIRIM_HOTSPOT)) {
-    if (value == 1) requestHotspot(true);
+// =====================================================================
+// EMQX MQTT (TLS 8883) — koneksi dibuat di task core 0, loop() tidak pernah menunggu
+// =====================================================================
+void onEmqxMessage(char* topic, byte* payload, unsigned int length) {
+  char nama[24], teks[16];
+  if (!ambilNama(topic, EMQX_PREFIX_CMD, "", nama, sizeof(nama))) return;
+  salinPayload(payload, length, teks, sizeof(teks));
+  prosesPerintah(nama, teks, ASAL_EMQX);
+}
+
+void emqxSambung() {
+  if (emqx.connect(EMQX_CLIENT_ID, EMQX_USER, EMQX_PASS, EMQX_STATUS, 1, true, "offline")) {
+    emqx.publish(EMQX_STATUS, "online", true);
+    emqx.subscribe(EMQX_SUB_CMD, 1);
+    emqxBaruTersambung = true;
+  } else {
+    Serial.printf("EMQX gagal, rc=%d\n", emqx.state());
   }
-  Serial.printf("RX %s = %d\n", topic, value);
+}
+
+void emqxConnectTask(void* arg) {
+  for (;;) {
+    if (WiFi.status() == WL_CONNECTED && xSemaphoreTake(emqxLock, portMAX_DELAY) == pdTRUE) {
+      if (!emqx.connected()) emqxSambung();
+      xSemaphoreGive(emqxLock);
+    }
+    vTaskDelay(pdMS_TO_TICKS(EMQX_RETRY_MS));
+  }
+}
+
+void setupEmqx() {
+  emqxLock = xSemaphoreCreateMutex();
+  emqxNet.setInsecure();
+  emqxNet.setHandshakeTimeout(8);
+  emqx.setServer(EMQX_HOST, EMQX_PORT);
+  emqx.setKeepAlive(EMQX_KEEPALIVE_S);
+  emqx.setSocketTimeout(5);
+  emqx.setBufferSize(256);
+  emqx.setCallback(onEmqxMessage);
+  xTaskCreatePinnedToCore(emqxConnectTask, "emqx", 10240, nullptr, 1, nullptr, 0);
+}
+
+void handleEmqx() {
+  if (xSemaphoreTake(emqxLock, 0) != pdTRUE) {
+    emqxAktif = false;
+    return;
+  }
+  emqxAktif = emqx.connected();
+  if (emqxAktif) emqx.loop();
+  xSemaphoreGive(emqxLock);
+  if (emqxBaruTersambung) {
+    emqxBaruTersambung = false;
+    Serial.println("EMQX terhubung");
+    tandaiAck(ACK_GERAK, currentMove, false);
+  }
+}
+
+void kirimAckEmqx() {
+  if (xSemaphoreTake(emqxLock, 0) != pdTRUE) return;
+  if (emqx.connected()) {
+    char buf[12];
+    for (int i = 0; i < ACK_JUMLAH; i++) {
+      if (!acks[i].pending || acks[i].viaUbidots) continue;
+      snprintf(buf, sizeof(buf), "%d", acks[i].value);
+      if (emqx.publish(acks[i].emqxTopic, buf)) acks[i].pending = false;
+    }
+  }
+  xSemaphoreGive(emqxLock);
+}
+
+void kirimAckUbidots() {
+  if (WiFi.status() != WL_CONNECTED || !ubidots.connected()) return;
+  int count = 0;
+  for (int i = 0; i < ACK_JUMLAH; i++) {
+    if (!acks[i].pending) continue;
+    ubidots.add(acks[i].ubiVar, acks[i].value);
+    acks[i].pending = false;
+    count++;
+  }
+  if (count > 0) ubidots.ubidotsPublish(DEVICE_LABEL);
+}
+
+void kirimAck() {
+  kirimAckEmqx();
+  kirimAckUbidots();
+}
+
+void logHeap() {
+  if (!DEBUG_HEAP || millis() - lastHeapLogMs < HEAP_LOG_MS) return;
+  lastHeapLogMs = millis();
+  if (emqxAktif) {
+    Serial.printf("Heap bebas %lu B (minimum %lu B), EMQX tersambung\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap());
+  } else {
+    Serial.printf("Heap bebas %lu B (minimum %lu B), EMQX belum tersambung\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap());
+  }
 }
 
 void onMqttConnected() {
   Serial.println("MQTT Ubidots terhubung");
-  tandaiAckGerak(MOVE_STOP);
+  tandaiAck(ACK_GERAK, MOVE_STOP, false);
   ubidots.add(VAR_GERAK, 0);
   ubidots.add(VAR_KIRIM_HOTSPOT, 0);
   ubidots.ubidotsPublish(DEVICE_LABEL);
@@ -432,7 +564,7 @@ void handleMqtt() {
   }
   if (millis() - lastMqttAttemptMs < MQTT_RETRY_MS && lastMqttAttemptMs != 0) return;
   lastMqttAttemptMs = millis();
-  stopMotors();
+  if (!emqxAktif) stopMotors();
   if (ubidots.connect()) onMqttConnected();
   else Serial.println("MQTT gagal, coba lagi...");
 }
@@ -537,10 +669,10 @@ void handleFirebase() {
 // =====================================================================
 void handleFailsafe() {
   if (currentMove == MOVE_STOP) return;
-  bool linkOk = WiFi.status() == WL_CONNECTED && ubidots.connected();
+  bool linkOk = WiFi.status() == WL_CONNECTED && (ubidots.connected() || emqxAktif);
   if (!linkOk || millis() - lastCommandMs > FAILSAFE_TIMEOUT_MS) {
     stopMotors();
-    tandaiAckGerak(MOVE_STOP);
+    tandaiAck(ACK_GERAK, MOVE_STOP, false);
     if (linkOk) Serial.printf("FAILSAFE: tidak ada heartbeat > %lu ms\n", FAILSAFE_TIMEOUT_MS);
     else Serial.println("FAILSAFE: koneksi terputus");
   }
@@ -567,6 +699,7 @@ void setup() {
 
   setupWiFi();
   ubidots.begin(onMqttMessage);
+  setupEmqx();
 
   fbResults = xQueueCreate(4, sizeof(FbResult));
   xTaskCreatePinnedToCore(firebaseTask, "firebase", 12288, nullptr, 1, nullptr, 0);
@@ -575,8 +708,10 @@ void setup() {
 void loop() {
   handleWiFi();
   handleMqtt();
+  handleEmqx();
   handleFailsafe();
   kirimAck();
+  logHeap();
   handleTimeSync();
   handleFirebase();
 
