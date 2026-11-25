@@ -23,7 +23,7 @@ const THEMES = [
 ];
 
 const DEFAULT_SETTINGS = {
-  v: 3,
+  v: 4,
   device: "phantom",
   pollInterval: 3,
   theme: "garuda",
@@ -31,7 +31,7 @@ const DEFAULT_SETTINGS = {
   batas: 50,
   mqtt: true,
   lengan: { turun: 25, bawa: 60, parkir: 135, min: 25, max: 135 },
-  capit: { buka: 118, tutup: 90, min: 40, max: 150 },
+  capit: { buka: 20, tutup: 110, min: 20, max: 110 },
 };
 
 const ROBOT_VARS = ["suhu_objek", "fb_code", "hotspot"];
@@ -86,11 +86,18 @@ function num(v, fallback) {
   return n;
 }
 
+const OLD_CAPIT = { buka: 118, tutup: 90, min: 40, max: 150 };
+
 function loadSettings() {
   const saved = store.get(KEY_SETTINGS, {}) || {};
   const s = { ...DEFAULT_SETTINGS, ...saved };
   s.lengan = { ...DEFAULT_SETTINGS.lengan, ...(saved.lengan || {}) };
   s.capit = { ...DEFAULT_SETTINGS.capit, ...(saved.capit || {}) };
+  if ((Number(saved.v) || 0) < 4 && saved.capit) {
+    for (const [k, old] of Object.entries(OLD_CAPIT)) {
+      if (Number(saved.capit[k]) === old) s.capit[k] = DEFAULT_SETTINGS.capit[k];
+    }
+  }
   s.batas = num(saved.batas, DEFAULT_SETTINGS.batas);
   s.pollInterval = Math.max(1, num(s.pollInterval, DEFAULT_SETTINGS.pollInterval));
   if (!THEMES.some((t) => t.id === s.theme)) s.theme = DEFAULT_SETTINGS.theme;
@@ -345,7 +352,22 @@ async function fastStart() {
     clearTimeout(fast.timer);
     fast.ready = true;
     fast.fails = 0;
+    const dev = state.settings.device;
+    try {
+      client.subscribe(Object.values(ACK_VARS).map((v) => `/v1.6/devices/${dev}/${v}/lv`), { qos: 0 }, () => {});
+    } catch {}
     showNet();
+  });
+  client.on("message", (topic, payload) => {
+    if (fast.client !== client) return;
+    const label = String(topic).split("/")[4];
+    const variable = Object.keys(ACK_VARS).find((k) => ACK_VARS[k] === label);
+    const text = String(payload);
+    let value = Number(text);
+    if (Number.isNaN(value)) {
+      try { value = Number(JSON.parse(text).value); } catch {}
+    }
+    if (variable && Number.isFinite(value)) onAck(variable, Math.round(value));
   });
   client.on("error", down);
   client.on("close", down);
@@ -394,10 +416,12 @@ function fastPublish(values) {
 async function transmit(values) {
   if (fast.ready) {
     try {
-      return await fastPublish(values);
+      const qos = await fastPublish(values);
+      return { via: "mqtt", qos };
     } catch {}
   }
-  return postValues(values);
+  await postValues(values);
+  return { via: "rest" };
 }
 
 function showNet() {
@@ -479,6 +503,7 @@ function markPending(variable, busy) {
 }
 
 function send(variable, value, priority = PRIORITY.control) {
+  if (ACK_VARS[variable] && variable !== "gerak") ackBegin("servo", variable, value);
   const q = state.sendQ[variable] || (state.sendQ[variable] = { busy: false, has: false, value: null, priority });
   q.value = value;
   q.has = true;
@@ -498,7 +523,8 @@ async function flush(variable, q) {
       return transmit({ [variable]: sent });
     };
     try {
-      await (fast.ready ? job() : limiter.run(job, q.priority));
+      const r = await (fast.ready ? job() : limiter.run(job, q.priority));
+      if (ACK_VARS[variable]) ackServer("servo", variable, sent, r);
       tries = 0;
     } catch (e) {
       if (RETRYABLE.has(e.kind) && ++tries < 4) {
@@ -528,13 +554,14 @@ async function deliverGerak(v) {
       const qos = await fastPublish({ gerak: v });
       state.net = { path: "MQTT", ms: qos ? Math.round(performance.now() - t0) : null };
       showNet();
-      return;
+      return { via: "mqtt", qos };
     } catch {}
   }
   limiter.last = Date.now();
   await postValues({ gerak: v });
   state.net = { path: "REST", ms: Math.round(performance.now() - t0) };
   showNet();
+  return { via: "rest" };
 }
 
 function queueGerak(v) {
@@ -570,7 +597,8 @@ async function pumpGerak() {
     markPending("gerak", true);
     for (let tries = 1; ; tries++) {
       try {
-        await deliverGerak(v);
+        const r = await deliverGerak(v);
+        ackServer("gerak", "gerak", v, r);
         if (state.bannerKind === "ratelimit") setBanner("");
         break;
       } catch (e) {
@@ -617,6 +645,106 @@ function parallelStop() {
   deliverGerak(0).catch(() => {});
 }
 
+/* ---------- Status perintah: dikirim → sampai server → terlaksana robot ---------- */
+
+const ACK_TIMEOUT_MS = 3000;
+const ACK_VARS = { gerak: "ack_gerak", lengan: "ack_lengan", capit: "ack_capit" };
+const ACK_NAMES = { 0: "STOP", 1: "MAJU", 2: "MUNDUR", 3: "KIRI", 4: "KANAN", 5: "MAJU-KIRI", 6: "MAJU-KANAN", 7: "MUNDUR-KIRI", 8: "MUNDUR-KANAN" };
+const acks = { gerak: { sel: "#ack-gerak", cycle: null, timer: null }, servo: { sel: "#ack-servo", cycle: null, timer: null } };
+const robotState = { gerak: null, lengan: null, capit: null };
+const recentServo = { lengan: [], capit: [] };
+
+function ackLabel(variable, value) {
+  if (variable === "gerak") return ACK_NAMES[value] || `GERAK ${value}`;
+  return `${variable.toUpperCase()} ${value}°`;
+}
+
+function ackShow(slot, text, kind) {
+  const el = $(acks[slot].sel);
+  if (!el) return;
+  el.textContent = text;
+  el.className = `ack tiny ${kind}`;
+  el.title = text;
+}
+
+function ackRender(slot) {
+  const c = acks[slot].cycle;
+  if (!c) return;
+  const label = ackLabel(c.variable, c.value);
+  if (c.stage === "sent") ackShow(slot, `⏳ ${label} dikirim…`, "sent");
+  else if (c.stage === "server" && c.rest) ackShow(slot, `📡 ${label} sampai di server (balasan robot butuh jalur MQTT)`, "server");
+  else if (c.stage === "server") ackShow(slot, `📡 ${label} sampai di server`, "server");
+  else if (c.stage === "already") ackShow(slot, `✅ ${label} — robot sudah dalam kondisi ini`, "done");
+  else if (c.stage === "fail") ackShow(slot, `❌ Robot tidak membalas (${label})`, "fail");
+  else if (c.stage === "done" && c.got !== c.value) ackShow(slot, `✅ ${ackLabel(c.variable, c.got)} terlaksana (diminta ${c.value}°, ${c.ms} ms)`, "done");
+  else if (c.stage === "done") ackShow(slot, `✅ ${label} terlaksana (${c.ms} ms)`, "done");
+}
+
+function ackBegin(slot, variable, value) {
+  const a = acks[slot];
+  clearTimeout(a.timer);
+  a.cycle = { variable, value, got: value, t0: performance.now(), stage: "sent", rest: !fast.ready, ms: 0 };
+  if (variable !== "gerak") {
+    const list = recentServo[variable];
+    a.cycle.entry = { value, t: Date.now(), acked: false };
+    list.push(a.cycle.entry);
+    while (list.length > 8) list.shift();
+  }
+  if (variable === "gerak" && robotState.gerak === value && gerak.sent === value && !gerak.busy && !gerak.queue.length) {
+    a.cycle.stage = "already";
+  } else if (fast.ready) {
+    a.timer = setTimeout(() => {
+      if (a.cycle && a.cycle.stage !== "done" && a.cycle.stage !== "already") {
+        a.cycle.stage = "fail";
+        ackRender(slot);
+      }
+    }, ACK_TIMEOUT_MS);
+  }
+  ackRender(slot);
+}
+
+function ackServer(slot, variable, value, via) {
+  const c = acks[slot].cycle;
+  if (!c || c.variable !== variable || c.value !== value || c.stage !== "sent") return;
+  if (!via || (via.via === "mqtt" && !via.qos)) return;
+  c.rest = via.via === "rest";
+  c.stage = "server";
+  ackRender(slot);
+}
+
+function onAck(variable, value) {
+  robotState[variable] = value;
+  const slot = variable === "gerak" ? "gerak" : "servo";
+  const a = acks[slot];
+  const c = a.cycle;
+  if (!c || c.variable !== variable) return;
+  if (c.stage === "done" || c.stage === "already") {
+    if (variable === "gerak" && value === 0 && c.value !== 0 && state.drive.dir) ackShow(slot, "⚠ Robot berhenti sendiri (failsafe)", "fail");
+    else if (variable === "gerak" && value === c.value) ackRender(slot);
+    return;
+  }
+  if (variable !== "gerak") {
+    const hit = recentServo[variable].find((x) => !x.acked && x.value === value && Date.now() - x.t < 10000);
+    if (hit) hit.acked = true;
+    if (value !== c.value && hit && hit !== c.entry) return;
+    c.entry.acked = true;
+  } else if (value !== c.value) {
+    return;
+  }
+  clearTimeout(a.timer);
+  c.got = value;
+  c.ms = Math.round(performance.now() - c.t0);
+  c.stage = "done";
+  ackRender(slot);
+}
+
+function seedRobotState(values) {
+  for (const [variable, label] of Object.entries(ACK_VARS)) {
+    const d = values[label];
+    if (d && robotState[variable] === null) robotState[variable] = Math.round(d.value);
+  }
+}
+
 /* ---------- Gerak (tahan = jalan, lepas = berhenti) ---------- */
 
 const DIR_VEC = { 1: [1, 0], 2: [-1, 0], 3: [0, -1], 4: [0, 1], 5: [1, -1], 6: [1, 1], 7: [-1, -1], 8: [-1, 1] };
@@ -646,6 +774,7 @@ function applyDrive() {
   showDrive(dir);
   if (state.drive.dir === dir) return;
   state.drive = { dir };
+  ackBegin("gerak", "gerak", dir);
   if (!dir) {
     stopNow();
     schedulePoll(POLL_RESUME_MS);
@@ -698,6 +827,7 @@ function emergencyStop() {
   const btn = $("#estop");
   btn.classList.add("fired");
   setTimeout(() => btn.classList.remove("fired"), 300);
+  ackBegin("gerak", "gerak", 0);
   clearStopGuards();
   gerak.queue.length = 0;
   gerak.dirAt = 0;
@@ -1025,6 +1155,7 @@ async function poll() {
   state.polling = true;
   try {
     state.values = await readValues();
+    seedRobotState(state.values);
     if (state.bannerKind) setBanner("");
     syncSliders();
     updateRobotStatus();
@@ -1172,7 +1303,7 @@ function applySettings() {
     state.token = token;
     store.set(KEY_TOKEN, token);
   }
-  if (tokenChanged || next.mqtt !== s.mqtt) {
+  if (tokenChanged || deviceChanged || next.mqtt !== s.mqtt) {
     fast.fails = 0;
     fastStart();
   }

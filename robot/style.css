@@ -258,7 +258,7 @@ input[type="range"] {
 
 /* ---------- Kolom kiri: maju/mundur + speed ---------- */
 
-.drive { grid-template-rows: auto auto minmax(0, 1fr); }
+.drive { grid-template-rows: auto auto auto minmax(0, 1fr); }
 .throttle { display: grid; grid-template-rows: 1fr 1fr; gap: var(--gap); min-height: 0; }
 .steer { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); min-height: 0; }
 .pad-btn {
@@ -294,6 +294,10 @@ input[type="range"] {
 .slider-card { display: grid; gap: 2px; }
 .drive-state { text-align: center; font-family: var(--font-num); font-weight: 700; letter-spacing: 0.08em; color: var(--text-2); }
 .drive-state.moving { color: var(--accent); }
+.ack { min-height: 1.35em; line-height: 1.35; text-align: center; font-family: var(--font-num); font-size: 0.72rem; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ack.server { color: var(--text); }
+.ack.done { color: var(--good-text); }
+.ack.fail { color: var(--critical-text); }
 
 /* ---------- Kolom tengah: suhu, grafik, web dosen ---------- */
 
@@ -337,7 +341,7 @@ input[type="range"] {
 
 /* ---------- Kolom kanan: lengan, capit, stop ---------- */
 
-.arm { grid-template-rows: auto auto minmax(0, 1fr); }
+.arm { grid-template-rows: auto auto auto minmax(0, 1fr); }
 .servo { display: grid; gap: 4px; }
 .presets { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
 .servo { align-content: start; }
@@ -386,7 +390,7 @@ input[type="range"] {
   .app.portrait-ok .throttle { height: 56vw; }
   .app.portrait-ok .steer { height: 30vw; }
   .app.portrait-ok .chart-card { height: 180px; }
-  .app.portrait-ok .arm { grid-template-rows: auto auto auto; }
+  .app.portrait-ok .arm { grid-template-rows: auto auto auto auto; }
   .app.portrait-ok .estop { min-height: 64px; }
   .brand { display: none; }
 }
@@ -401,6 +405,8 @@ input[type="range"] {
 
 @media (max-height: 350px) {
   .chart-card { display: none; }
+  .drive-state { display: none; }
+  .drive { grid-template-rows: auto auto minmax(0, 1fr); }
   .monitor { grid-template-rows: auto auto minmax(0, 1fr); }
   .web-last { -webkit-line-clamp: 1; }
   .card { padding: 4px 8px; }
@@ -410,6 +416,14 @@ input[type="range"] {
   .servo input[type="range"] { grid-column: 1 / -1; }
   .presets { gap: 4px; }
   .btn.chip { min-height: 30px; padding: 4px 0; font-size: clamp(0.72rem, 1.7vw, 0.8rem); letter-spacing: 0; }
+}
+
+@media (max-height: 290px) {
+  .btn.chip { min-height: 26px; }
+  input[type="range"] { height: 20px; }
+  .ack { font-size: 0.66rem; line-height: 1.2; min-height: 1.2em; }
+  .arm, .drive { gap: 4px; }
+  .card { padding: 3px 8px; }
 }
 
 @media (max-width: 700px) and (orientation: landscape) {

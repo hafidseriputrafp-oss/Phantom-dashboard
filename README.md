@@ -127,6 +127,9 @@ mengembalikan widget bawaan.
 | `fb_code`       | robot → dashboard  | Kode HTTP kiriman terakhir ke web dosen (200 = berhasil)         |
 | `fb_jenis`      | robot → dashboard  | Jenis kiriman terakhir: 1 = data suhu + wifi, 2 = hotspot        |
 | `fb_suhu`       | robot → dashboard  | Suhu yang ikut dikirim ke web dosen                              |
+| `ack_gerak`     | robot → dashboard  | Balasan: kode gerak yang benar-benar dijalankan (hanya saat berubah) |
+| `ack_lengan`    | robot → dashboard  | Balasan: sudut lengan setelah dibatasi robot                     |
+| `ack_capit`     | robot → dashboard  | Balasan: sudut capit setelah dibatasi robot                      |
 | `gerak`         | dashboard → robot  | 0 stop, 1 maju, 2 mundur, 3 putar kiri, 4 putar kanan, 5 maju-kiri, 6 maju-kanan, 7 mundur-kiri, 8 mundur-kanan |
 | `speed`         | dashboard → robot  | PWM 80–255                                                       |
 | `lengan`        | dashboard → robot  | Sudut servo lengan (derajat)                                     |
@@ -207,6 +210,22 @@ Supaya terasa secepat mungkin:
   paralel (ketukan yang belum sempat terkirim dibuang), lalu sekali lagi setelah perintah sebelumnya
   selesai, jadi robot pasti berhenti. **STOP DARURAT** selalu dikirim seketika dan diulang sekali.
 
+### Status perintah: apakah robot benar-benar menjalankan?
+
+Di bawah teks arah (kolom kiri) dan di atas tombol ◀ ▶ (untuk lengan/capit) ada baris status:
+
+| Status | Arti |
+|--------|------|
+| `⏳ MAJU dikirim…` | tombol baru ditekan |
+| `📡 MAJU sampai di server` | broker Ubidots sudah menerima (PUBACK MQTT / REST 200) |
+| `✅ MAJU terlaksana (420 ms)` | robot membalas lewat `ack_gerak`; angka = waktu dari tombol ditekan sampai balasan masuk |
+| `❌ Robot tidak membalas` | 3 detik tanpa balasan (robot mati, WiFi robot putus, atau firmware lama) |
+
+Untuk servo: `✅ CAPIT 110° terlaksana (…)`. Kalau robot membatasi sudut, yang tampil adalah sudut
+hasil robot. Menahan tombol (heartbeat) tidak mengulang status. Kalau robot berhenti sendiri karena
+failsafe saat tombol masih ditahan, muncul `⚠ Robot berhenti sendiri (failsafe)`. Balasan robot hanya
+bisa diterima lewat jalur MQTT. Saat dashboard memakai REST, status berhenti di 📡.
+
 ### Batas request Ubidots di dashboard robot
 
 - Semua variabel device dibaca dengan **1 request** (`GET /api/v2.0/devices/~phantom/variables/`).
@@ -283,10 +302,18 @@ Catatan wiring:
 - Lepas jumper ENA/ENB di L298N. Motor kiri diparalel ke OUT1/OUT2, motor kanan ke OUT3/OUT4.
 - Servo diberi daya dari baterai servo (4,8–6 V), bukan dari pin 3V3/5V ESP32.
   **Semua GND harus disatukan.**
-- Kalau arah roda terbalik, ubah `MOTOR_KIRI_BALIK` / `MOTOR_KANAN_BALIK`. Kalau belok melengkung
-  terlalu tajam/landai, ubah `CURVE_RATIO` (kecepatan roda sisi dalam, default 0,4).
-- Sudut servo dikirim langsung dari dashboard (derajat). Posisi awal saat menyala: lengan 135°
-  (PARKIR), capit 90° (TUTUP).
+- Kalau arah roda terbalik, ubah `MOTOR_KIRI_BALIK` / `MOTOR_KANAN_BALIK` (hasil tes: roda kanan
+  terbalik, jadi `MOTOR_KANAN_BALIK = true`). Kalau belok melengkung terlalu tajam/landai, ubah
+  `CURVE_RATIO` (kecepatan roda sisi dalam, default 0,4).
+- Sudut servo dikirim langsung dari dashboard (derajat) dan dibatasi di firmware: capit
+  `CAPIT_MIN`–`CAPIT_MAX` = 20–110° (BUKA 20°, TUTUP 110°, hasil kalibrasi), lengan
+  `LENGAN_MIN`–`LENGAN_MAX` (sementara 0–180°, ubah setelah kalibrasi). Posisi awal saat menyala:
+  lengan 135° (PARKIR), capit 110° (TUTUP).
+- Nama client MQTT tetap `garuda13-phantom` (`MQTT_CLIENT`), tidak lagi `00:00:00:00:00:00`.
+- **Balasan (ACK):** setelah perintah dijalankan, robot mengirim `ack_gerak` / `ack_lengan` /
+  `ack_capit` ke Ubidots dalam satu publish dari `loop()` (`kirimAck()`), tidak dari callback MQTT.
+  `ack_gerak` hanya dikirim saat gerak berubah (heartbeat dengan nilai sama tidak dibalas), saat
+  failsafe menghentikan motor (0), dan saat (re)connect (0).
 
 **Fitur keamanan:**
 
