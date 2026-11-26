@@ -10,9 +10,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Rajdhani:wght@500;600;700&display=swap">
-  <link rel="stylesheet" href="style.css?v=20261128">
+  <link rel="stylesheet" href="style.css?v=20261129">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js" defer></script>
-  <script src="app.js?v=20261128" defer></script>
+  <script src="app.js?v=20261129" defer></script>
 </head>
 <body>
 
@@ -60,7 +60,7 @@
       <section class="col drive" aria-label="Maju mundur (ibu jari kiri)">
         <div class="slider-card card">
           <div class="row-head"><span>SPEED</span><output id="speed-out">—</output></div>
-          <input type="range" id="speed" data-var="speed" min="80" max="255" step="5" value="150" aria-label="Kecepatan motor (PWM)">
+          <form class="num-row" id="speed-form" data-var="speed" novalidate><input type="number" id="speed" inputmode="numeric" min="0" max="255" step="1" enterkeyhint="send" placeholder="0–255" aria-label="Kecepatan motor PWM 0 sampai 255"><button type="submit" class="btn send">KIRIM</button><small class="clamp-note" id="speed-note" role="status" hidden></small></form>
         </div>
         <div class="drive-state tiny" id="drive-state">GERAK: STOP</div>
         <div class="ack tiny" id="ack-gerak" role="status" aria-live="polite"></div>
@@ -95,11 +95,11 @@
         <div class="servo card">
           <div class="row-head"><span>LENGAN</span><output id="lengan-out">—</output></div>
           <div class="presets" data-servo="lengan">
-            <button type="button" class="btn chip" data-preset="turun">TURUN</button>
+            <button type="button" class="btn chip" data-preset="naik">NAIK</button>
             <button type="button" class="btn chip" data-preset="bawa">BAWA</button>
-            <button type="button" class="btn chip" data-preset="parkir">PARKIR</button>
+            <button type="button" class="btn chip" data-preset="turun">TURUN</button>
           </div>
-          <input type="range" id="lengan" data-var="lengan" min="0" max="120" step="1" value="0" aria-label="Sudut lengan">
+          <form class="num-row" id="lengan-form" data-var="lengan" novalidate><input type="number" id="lengan" inputmode="numeric" min="0" max="150" step="1" enterkeyhint="send" placeholder="0–150" aria-label="Sudut lengan 0 sampai 150 derajat"><button type="submit" class="btn send">KIRIM</button><small class="clamp-note" id="lengan-note" role="status" hidden></small></form>
         </div>
         <div class="servo card">
           <div class="row-head"><span>CAPIT</span><output id="capit-out">—</output></div>
@@ -107,7 +107,7 @@
             <button type="button" class="btn chip" data-preset="buka">BUKA</button>
             <button type="button" class="btn chip" data-preset="tutup">TUTUP</button>
           </div>
-          <input type="range" id="capit" data-var="capit" min="25" max="110" step="1" value="110" aria-label="Sudut capit">
+          <form class="num-row" id="capit-form" data-var="capit" novalidate><input type="number" id="capit" inputmode="numeric" min="25" max="110" step="1" enterkeyhint="send" placeholder="25–110" aria-label="Sudut capit 25 sampai 110 derajat"><button type="submit" class="btn send">KIRIM</button><small class="clamp-note" id="capit-note" role="status" hidden></small></form>
         </div>
         <div class="ack tiny" id="ack-servo" role="status" aria-live="polite"></div>
         <div class="steer">
@@ -131,11 +131,11 @@
       <fieldset class="field">
         <legend>Sudut lengan (°)</legend>
         <div class="grid5">
-          <label><span>TURUN</span><input name="lengan-turun" type="number" min="0" max="120" required></label>
-          <label><span>BAWA</span><input name="lengan-bawa" type="number" min="0" max="120" required></label>
-          <label><span>PARKIR</span><input name="lengan-parkir" type="number" min="0" max="120" required></label>
-          <label><span>Slider min</span><input name="lengan-min" type="number" min="0" max="120" required></label>
-          <label><span>Slider max</span><input name="lengan-max" type="number" min="0" max="120" required></label>
+          <label><span>NAIK</span><input name="lengan-naik" type="number" min="0" max="150" required></label>
+          <label><span>BAWA</span><input name="lengan-bawa" type="number" min="0" max="150" required></label>
+          <label><span>TURUN</span><input name="lengan-turun" type="number" min="0" max="150" required></label>
+          <label><span>Batas min</span><input name="lengan-min" type="number" min="0" max="150" required></label>
+          <label><span>Batas max</span><input name="lengan-max" type="number" min="0" max="150" required></label>
         </div>
       </fieldset>
       <fieldset class="field">
@@ -143,8 +143,8 @@
         <div class="grid5">
           <label><span>BUKA</span><input name="capit-buka" type="number" min="25" max="110" required></label>
           <label><span>TUTUP</span><input name="capit-tutup" type="number" min="25" max="110" required></label>
-          <label><span>Slider min</span><input name="capit-min" type="number" min="25" max="110" required></label>
-          <label><span>Slider max</span><input name="capit-max" type="number" min="25" max="110" required></label>
+          <label><span>Batas min</span><input name="capit-min" type="number" min="25" max="110" required></label>
+          <label><span>Batas max</span><input name="capit-max" type="number" min="25" max="110" required></label>
         </div>
       </fieldset>
       <div class="grid2">

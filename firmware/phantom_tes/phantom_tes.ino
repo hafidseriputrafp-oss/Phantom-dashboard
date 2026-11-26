@@ -68,8 +68,9 @@ const bool     MOTOR_KIRI_BALIK  = false;   // ubah jika arah roda kiri terbalik
 const bool     MOTOR_KANAN_BALIK = true;
 const uint8_t  SPEED_DEFAULT     = 150;
 const float    CURVE_RATIO       = 0.4;     // kecepatan roda sisi dalam saat belok melengkung
+const uint8_t  TURN_SPEED        = 255;     // putar di tempat: roda saling menahan, perlu PWM penuh
 
-const int LENGAN_MIN = 0, LENGAN_MAX = 120;    // MG996R terbalik: 0 = naik mentok, 120 = turun maksimal
+const int LENGAN_MIN = 0, LENGAN_MAX = 150;    // MG996R terbalik: 0 = naik mentok, 150 = turun maksimal
 const int CAPIT_MIN = 25, CAPIT_MAX = 110;     // 25 = buka, 110 = tutup
 const int LENGAN_AWAL = 0, CAPIT_AWAL = 110;
 const int SERVO_MIN_US = 500, SERVO_MAX_US = 2400;
@@ -139,13 +140,18 @@ void driveMotors(int kiri, int kanan, float skalaKiri, float skalaKanan) {
   setMotor(pwmKanan, PIN_MOTOR_IN3, PIN_MOTOR_IN4, kanan, (uint8_t)(currentSpeed * skalaKanan), MOTOR_KANAN_BALIK);
 }
 
+void putarDiTempat(int kiri, int kanan) {
+  setMotor(pwmKiri, PIN_MOTOR_IN1, PIN_MOTOR_IN2, kiri, TURN_SPEED, MOTOR_KIRI_BALIK);
+  setMotor(pwmKanan, PIN_MOTOR_IN3, PIN_MOTOR_IN4, kanan, TURN_SPEED, MOTOR_KANAN_BALIK);
+}
+
 void applyMove(Move m) {
   currentMove = m;
   switch (m) {
     case MOVE_MAJU:          driveMotors(1, 1, 1.0, 1.0);   break;
     case MOVE_MUNDUR:        driveMotors(-1, -1, 1.0, 1.0); break;
-    case MOVE_KIRI:          driveMotors(-1, 1, 1.0, 1.0);  break;
-    case MOVE_KANAN:         driveMotors(1, -1, 1.0, 1.0);  break;
+    case MOVE_KIRI:          putarDiTempat(-1, 1);          break;
+    case MOVE_KANAN:         putarDiTempat(1, -1);          break;
     case MOVE_MAJU_KIRI:     driveMotors(1, 1, CURVE_RATIO, 1.0);   break;
     case MOVE_MAJU_KANAN:    driveMotors(1, 1, 1.0, CURVE_RATIO);   break;
     case MOVE_MUNDUR_KIRI:   driveMotors(-1, -1, CURVE_RATIO, 1.0); break;

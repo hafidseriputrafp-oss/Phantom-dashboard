@@ -23,14 +23,14 @@ const THEMES = [
 ];
 
 const DEFAULT_SETTINGS = {
-  v: 5,
+  v: 6,
   device: "phantom",
   pollInterval: 3,
   theme: "garuda",
   mode: "dark",
   batas: 50,
   mqtt: true,
-  lengan: { turun: 120, bawa: 60, parkir: 0, min: 0, max: 120 },
+  lengan: { naik: 0, bawa: 60, turun: 150, min: 0, max: 150 },
   capit: { buka: 25, tutup: 110, min: 25, max: 110 },
 };
 
@@ -50,7 +50,7 @@ const MQTT_LIB_SRI = "sha384-ilRYg/zm2XqUafLvBoGVk40UfNRnvUkYMy+e/JPo4YgsFR6X9Q3
 const MQTT_URLS = ["wss://industrial.api.ubidots.com:8084/mqtt", "wss://industrial.api.ubidots.com:8084"];
 const MQTT_CONNECT_MS = 5000;
 const MQTT_ACK_MS = 1500;
-const SLIDER_THROTTLE_MS = 700;
+const CLAMP_NOTE_MS = 4000;
 const ROBOT_ONLINE_MS = 15000;
 const ROBOT_LATE_MS = 60000;
 const STALE_MS = 20000;
@@ -86,20 +86,17 @@ function num(v, fallback) {
   return n;
 }
 
-const SERVO_LIMITS = { lengan: { min: 0, max: 120 }, capit: { min: 25, max: 110 } };
-const OLD_SERVO_DEFAULTS = {
-  lengan: [{ turun: 25, bawa: 60, parkir: 135, min: 25, max: 135 }],
-  capit: [{ buka: 118, tutup: 90, min: 40, max: 150 }, { buka: 20, tutup: 110, min: 20, max: 110 }],
-};
+const SERVO_LIMITS = { lengan: { min: 0, max: 150 }, capit: { min: 25, max: 110 } };
+const VALUE_LIMITS = { speed: { min: 0, max: 255 }, ...SERVO_LIMITS };
 
 function migrateServo(servo, saved, oldVersion) {
   const lim = SERVO_LIMITS[servo];
-  const out = { ...DEFAULT_SETTINGS[servo], ...(saved || {}) };
-  for (const key of Object.keys(DEFAULT_SETTINGS[servo])) {
-    const v = Number(out[key]);
-    const wasDefault = oldVersion < 5 && OLD_SERVO_DEFAULTS[servo].some((d) => d[key] === v);
-    if (!Number.isFinite(v) || v < lim.min || v > lim.max || wasDefault) out[key] = DEFAULT_SETTINGS[servo][key];
-    else out[key] = v;
+  const def = DEFAULT_SETTINGS[servo];
+  const out = {};
+  for (const key of Object.keys(def)) {
+    const v = Number(saved && saved[key]);
+    const usang = oldVersion < 6 || !saved || !Number.isFinite(v) || v < lim.min || v > lim.max;
+    out[key] = usang ? def[key] : v;
   }
   return out;
 }
@@ -136,7 +133,8 @@ const state = {
   chart: null,
   lastChartTs: 0,
   bannerKind: "",
-  sliderTimers: {},
+  noteTimers: {},
+  active: { speed: 150, lengan: 0, capit: 110 },
 };
 
 /* ---------- Utilitas ---------- */
@@ -878,63 +876,91 @@ function bindPad() {
   });
 }
 
-/* ---------- Slider (speed, lengan, capit) ---------- */
+/* ---------- Kotak angka + KIRIM (speed, lengan, capit) ---------- */
 
-const SLIDERS = ["speed", "lengan", "capit"];
+const VALUE_VARS = ["speed", "lengan", "capit"];
 
-function showSlider(variable) {
-  const input = $(`#${variable}`);
+function valueRange(variable) {
+  const hw = VALUE_LIMITS[variable];
+  const s = state.settings[variable];
+  if (!s) return hw;
+  return { min: Math.max(hw.min, Math.min(s.min, s.max)), max: Math.min(hw.max, Math.max(s.min, s.max)) };
+}
+
+function showValue(variable) {
+  const v = state.active[variable];
   const unit = variable === "speed" ? "" : "°";
-  $(`#${variable}-out`).textContent = `${input.value}${unit}`;
+  let text = "—";
+  if (Number.isFinite(v)) text = `${v}${unit}`;
+  $(`#${variable}-out`).textContent = text;
   if (variable === "speed") return;
   const presets = state.settings[variable];
   document.querySelectorAll(`.presets[data-servo="${variable}"] [data-preset]`).forEach((b) => {
-    b.classList.toggle("on", Number(presets[b.dataset.preset]) === Number(input.value));
+    b.classList.toggle("on", Number(presets[b.dataset.preset]) === v);
   });
 }
 
-function sendSlider(variable, now) {
-  const value = Number($(`#${variable}`).value);
-  clearTimeout(state.sliderTimers[variable]);
-  if (now) {
-    send(variable, value);
+function showClampNote(variable, text) {
+  const note = $(`#${variable}-note`);
+  clearTimeout(state.noteTimers[variable]);
+  note.textContent = text;
+  note.hidden = !text;
+  if (text) state.noteTimers[variable] = setTimeout(() => { note.hidden = true; }, CLAMP_NOTE_MS);
+}
+
+function setValue(variable, value, transmit) {
+  const r = valueRange(variable);
+  const v = Math.min(r.max, Math.max(r.min, Math.round(value)));
+  state.active[variable] = v;
+  $(`#${variable}`).value = v;
+  showValue(variable);
+  if (transmit) send(variable, v);
+  return v;
+}
+
+function kirimNilai(variable) {
+  const input = $(`#${variable}`);
+  input.dataset.touched = "1";
+  const raw = Number(String(input.value).replace(",", "."));
+  if (input.value === "" || !Number.isFinite(raw)) {
+    showClampNote(variable, "isi angka dulu");
     return;
   }
-  state.sliderTimers[variable] = setTimeout(() => send(variable, value), SLIDER_THROTTLE_MS);
+  const v = setValue(variable, raw, true);
+  if (v !== Math.round(raw)) showClampNote(variable, `dibatasi ke ${v}`);
+  else showClampNote(variable, "");
+  vibrate(15);
 }
 
-function setSlider(variable, value, transmit) {
-  const input = $(`#${variable}`);
-  input.value = value;
-  showSlider(variable);
-  if (transmit) sendSlider(variable, true);
-}
-
-function applySliderLimits() {
-  for (const v of ["lengan", "capit"]) {
-    const s = state.settings[v];
+function applyValueLimits() {
+  for (const v of VALUE_VARS) {
+    const r = valueRange(v);
     const input = $(`#${v}`);
-    input.min = Math.min(s.min, s.max);
-    input.max = Math.max(s.min, s.max);
-    showSlider(v);
+    input.min = r.min;
+    input.max = r.max;
+    input.placeholder = `${r.min}–${r.max}`;
+    const cur = state.active[v];
+    if (Number.isFinite(cur) && (cur < r.min || cur > r.max)) setValue(v, cur, false);
+    showValue(v);
   }
 }
 
-function bindSliders() {
-  for (const v of SLIDERS) {
+function bindValues() {
+  for (const v of VALUE_VARS) {
     const input = $(`#${v}`);
-    input.addEventListener("input", () => {
-      input.dataset.touched = "1";
-      showSlider(v);
-      sendSlider(v, false);
+    input.value = state.active[v];
+    $(`#${v}-form`).addEventListener("submit", (e) => {
+      e.preventDefault();
+      kirimNilai(v);
     });
-    input.addEventListener("change", () => sendSlider(v, true));
+    input.addEventListener("input", () => { input.dataset.touched = "1"; });
   }
   document.querySelectorAll(".presets [data-preset]").forEach((b) => {
     onTap(b, () => {
       const servo = b.closest(".presets").dataset.servo;
       $(`#${servo}`).dataset.touched = "1";
-      setSlider(servo, state.settings[servo][b.dataset.preset], true);
+      showClampNote(servo, "");
+      setValue(servo, state.settings[servo][b.dataset.preset], true);
       vibrate(15);
     });
   });
@@ -1057,13 +1083,13 @@ function updateRobotStatus() {
   }
 }
 
-function syncSliders() {
+function syncValues() {
   if (!state.firstSync) return;
   state.firstSync = false;
-  for (const v of SLIDERS) {
+  for (const v of VALUE_VARS) {
     const d = state.values[v];
     const input = $(`#${v}`);
-    if (d && !input.dataset.touched) setSlider(v, d.value, false);
+    if (d && !input.dataset.touched) setValue(v, d.value, false);
   }
 }
 
@@ -1169,7 +1195,7 @@ async function poll() {
     state.values = await readValues();
     seedRobotState(state.values);
     if (state.bannerKind) setBanner("");
-    syncSliders();
+    syncValues();
     updateRobotStatus();
     updateTemp();
     updateWeb();
@@ -1265,7 +1291,7 @@ function saveSettings() {
 }
 
 const ANGLE_FIELDS = [
-  ["lengan", "turun"], ["lengan", "bawa"], ["lengan", "parkir"], ["lengan", "min"], ["lengan", "max"],
+  ["lengan", "naik"], ["lengan", "bawa"], ["lengan", "turun"], ["lengan", "min"], ["lengan", "max"],
   ["capit", "buka"], ["capit", "tutup"], ["capit", "min"], ["capit", "max"],
 ];
 
@@ -1320,7 +1346,7 @@ function applySettings() {
     fast.fails = 0;
     fastStart();
   }
-  applySliderLimits();
+  applyValueLimits();
   if (deviceChanged) {
     state.readMode = "v2";
     state.firstSync = true;
@@ -1356,8 +1382,7 @@ function showApp() {
   state.firstSync = true;
   state.lastSeen = 0;
   initChart();
-  applySliderLimits();
-  showSlider("speed");
+  applyValueLimits();
   updateRobotStatus();
   updateTemp();
   updateWeb();
@@ -1430,7 +1455,7 @@ function bindEvents() {
   });
 
   bindPad();
-  bindSliders();
+  bindValues();
 
   const form = $("#settings-form");
   form.addEventListener("change", (e) => {

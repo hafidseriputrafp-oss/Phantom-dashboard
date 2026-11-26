@@ -130,7 +130,7 @@ Kalau sudah diubah sendiri, dashboard itu tidak disentuh; pakai **Reset ke prese
 | `ack_lengan`    | robot → dashboard  | Balasan: sudut lengan setelah dibatasi robot                     |
 | `ack_capit`     | robot → dashboard  | Balasan: sudut capit setelah dibatasi robot                      |
 | `gerak`         | dashboard → robot  | 0 stop, 1 maju, 2 mundur, 3 putar kiri, 4 putar kanan, 5 maju-kiri, 6 maju-kanan, 7 mundur-kiri, 8 mundur-kanan |
-| `speed`         | dashboard → robot  | PWM 80–255                                                       |
+| `speed`         | dashboard → robot  | PWM 0–255 (maju/mundur/lengkung; putar di tempat selalu 255)     |
 | `lengan`        | dashboard → robot  | Sudut servo lengan (derajat)                                     |
 | `capit`         | dashboard → robot  | Sudut servo capit (derajat)                                      |
 | `batas_suhu`    | dashboard → robot  | Batas suhu hotspot (°C), diatur di ⚙ Pengaturan                  |
@@ -160,10 +160,10 @@ menyala sebagai pengingat. Tekan **⛶** agar semua bagian (termasuk grafik) tam
 
 Dibuat untuk **dua ibu jari**:
 
-- **Kiri (ibu jari kiri):** slider **SPEED** (PWM 80–255) dan teks arah di atas; tombol besar
+- **Kiri (ibu jari kiri):** kotak angka **SPEED** (PWM 0–255) dan teks arah di atas; tombol besar
   **▲ MAJU** dan **▼ MUNDUR** di pojok kiri bawah.
-- **Kanan (ibu jari kanan):** **LENGAN** (TURUN / BAWA / PARKIR + slider) dan **CAPIT** (BUKA / TUTUP +
-  slider) di atas; tombol besar **◀ KIRI** dan **▶ KANAN** di pojok kanan bawah.
+- **Kanan (ibu jari kanan):** **LENGAN** (NAIK / BAWA / TURUN + kotak angka) dan **CAPIT** (BUKA / TUTUP +
+  kotak angka) di atas; tombol besar **◀ KIRI** dan **▶ KANAN** di pojok kanan bawah.
 - Tahan tombol supaya robot bergerak, lepas untuk berhenti (`gerak=0`, dikirim seketika).
   **Ketuk sekali** = robot bergerak sebentar (minimal 0,25 detik) lalu berhenti, jadi bisa dipakai
   untuk menggeser posisi sedikit demi sedikit. Kombinasi dua ibu jari:
@@ -186,10 +186,27 @@ Dibuat untuk **dua ibu jari**:
 Tombol STOP dan preset servo langsung bereaksi saat disentuh, jadi tetap jalan walaupun ibu jari
 lain sedang menahan tombol gerak.
 
+**Kotak angka (SPEED, LENGAN, CAPIT).** Slider sudah diganti, karena di robot asli slider tidak mau
+berubah/terkirim.
+
+1. Ketuk kotaknya. Keyboard angka muncul.
+2. Ketik nilai, lalu tekan **KIRIM** atau **Enter**.
+
+| Kotak | Batas |
+|-------|-------|
+| SPEED | 0–255 |
+| LENGAN | 0–150 |
+| CAPIT | 25–110 |
+
+- Nilai di luar batas otomatis dipotong ke batas terdekat, dan muncul teks kecil merah
+  **"dibatasi ke X"**. Contoh: LENGAN 200 → dikirim 150.
+- Angka di sebelah nama (mis. `LENGAN 60°`) adalah nilai aktif terakhir yang dikirim.
+- Tombol preset NAIK/BAWA/TURUN dan BUKA/TUTUP langsung mengirim sudutnya.
+
 **Pengaturan (⚙):** device label, interval baca data (default 3 detik), batas hotspot (default
 50 °C, ikut dikirim ke robot sebagai `batas_suhu`), **Jalur cepat MQTT** (default aktif), sudut
-tombol TURUN/BAWA/PARKIR/BUKA/TUTUP dan batas min/max slider, tema warna, mode Gelap/Terang, token,
-dan logout. Semua tersimpan di `localStorage` browser itu.
+tombol NAIK/BAWA/TURUN/BUKA/TUTUP dan batas min/max kotak angka (tidak bisa diisi di luar batas servo),
+tema warna, mode Gelap/Terang, token, dan logout. Semua tersimpan di `localStorage` browser itu.
 
 ### Kecepatan respons perintah
 
@@ -228,7 +245,7 @@ bisa diterima lewat jalur MQTT. Saat dashboard memakai REST, status berhenti di 
 ### Batas request Ubidots di dashboard robot
 
 - Semua variabel device dibaca dengan **1 request** (`GET /api/v2.0/devices/~phantom/variables/`).
-- Request baca/servo lewat antrean dengan jarak minimal 1,1 detik; nilai slider digabung (hanya nilai
+- Request baca/servo lewat antrean dengan jarak minimal 1,1 detik; nilai servo/speed digabung (hanya nilai
   terakhir yang dikirim). Lewat MQTT, servo dan gerak tidak memakai kuota REST.
 - Saat memakai REST, polling dijeda selama menyetir sampai 1,5 detik setelah berhenti. `gerak` dikirim
   ulang tiap **1,5 detik** selama tombol ditahan sebagai heartbeat untuk failsafe firmware (motor
@@ -305,16 +322,20 @@ Catatan wiring:
 - Kalau arah roda terbalik, ubah `MOTOR_KIRI_BALIK` / `MOTOR_KANAN_BALIK` (hasil tes: roda kanan
   terbalik, jadi `MOTOR_KANAN_BALIK = true`). Kalau belok melengkung terlalu tajam/landai, ubah
   `CURVE_RATIO` (kecepatan roda sisi dalam, default 0,4).
+- **Putar di tempat (◀ KIRI / ▶ KANAN, gerak 3/4) selalu memakai `TURN_SPEED` = 255** lewat
+  `putarDiTempat()`. Di PWM 150 robot tidak mau berputar, karena kedua roda saling menahan. Maju, mundur,
+  dan belok melengkung tetap memakai nilai SPEED dari dashboard.
 - Sudut servo dikirim langsung dari dashboard (derajat) dan dibatasi di firmware dengan `constrain()`.
   Batas hasil kalibrasi di robot asli:
 
   | Servo | Batas firmware | Arti | Posisi awal saat menyala | Tombol dashboard |
   |-------|----------------|------|--------------------------|------------------|
-  | Lengan (MG996R, arah terbalik) | `LENGAN_MIN`–`LENGAN_MAX` = 0–120° | 0° = naik mentok atas, 120° = turun maksimal | `LENGAN_AWAL` = 0° (PARKIR) | TURUN 120°, BAWA 60°, PARKIR 0° |
+  | Lengan (MG996R, arah terbalik) | `LENGAN_MIN`–`LENGAN_MAX` = 0–150° | 0° = naik mentok atas, 150° = turun maksimal | `LENGAN_AWAL` = 0° (NAIK) | NAIK 0°, BAWA 60°, TURUN 150° |
   | Capit | `CAPIT_MIN`–`CAPIT_MAX` = 25–110° | 25° = buka, 110° = tutup | `CAPIT_AWAL` = 110° (TUTUP) | BUKA 25°, TUTUP 110° |
 
-  Slider dan isian sudut di ⚙ Pengaturan dashboard dibatasi ke rentang yang sama. Pengaturan lama yang
-  tersimpan di browser (default lama atau di luar batas) otomatis diganti ke nilai di atas.
+  Kotak angka dan isian sudut di ⚙ Pengaturan dashboard dibatasi ke rentang yang sama. Pengaturan
+  lengan/capit lama yang tersimpan di browser (termasuk tombol PARKIR lama) otomatis diganti ke nilai
+  di atas. Pengaturan lain tidak disentuh.
 - Nama client MQTT tetap `garuda13-phantom` (`MQTT_CLIENT`), tidak lagi `00:00:00:00:00:00`.
 - **Balasan (ACK):** setelah perintah dijalankan, robot mengirim `ack_gerak` / `ack_lengan` /
   `ack_capit` ke Ubidots dalam satu publish dari `loop()` (`kirimAck()`), tidak dari callback MQTT.
