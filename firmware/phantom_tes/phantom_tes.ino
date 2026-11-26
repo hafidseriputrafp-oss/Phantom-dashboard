@@ -71,7 +71,7 @@ const float    CURVE_RATIO       = 0.4;     // kecepatan roda sisi dalam saat be
 const uint8_t  TURN_SPEED        = 255;     // putar di tempat: roda saling menahan, perlu PWM penuh
 
 const int LENGAN_MIN = 0, LENGAN_MAX = 180;    // MG996R terbalik: 0 = naik mentok, 180 = turun maksimal
-const int CAPIT_MIN = 25, CAPIT_MAX = 110;     // 25 = buka, 110 = tutup
+const int CAPIT_MIN = 25, CAPIT_MAX = 140;     // 25 = buka, makin besar makin menutup
 const int LENGAN_AWAL = 0, CAPIT_AWAL = 110;
 const int SERVO_MIN_US = 500, SERVO_MAX_US = 2400;
 
