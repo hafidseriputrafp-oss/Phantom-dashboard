@@ -214,7 +214,6 @@ input[type="range"] {
 .icon-btn.nudge { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft), 0 0 12px var(--accent-glow); }
 .net { font-family: var(--font-num); font-size: 0.75rem; color: var(--text-2); padding: 4px 8px; }
 .net.fast { color: var(--text); border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); }
-.net.emqx { color: var(--good-text); border-color: color-mix(in srgb, var(--good) 60%, var(--border)); }
 .net.slow { color: var(--warning-text); border-color: var(--warning); }
 @keyframes ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 70%, transparent); } 100% { box-shadow: 0 0 0 8px transparent; } }
 @keyframes blink { to { visibility: hidden; } }

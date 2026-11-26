@@ -5,5 +5,3 @@
 #define SECRET_WIFI_PASS     "PASSWORD_HOTSPOT_HP"
 #define SECRET_UBIDOTS_TOKEN "BBUS-GANTI_DENGAN_TOKEN_UBIDOTS"
 #define SECRET_FIREBASE_URL  "https://NAMA-PROJECT-default-rtdb.asia-southeast1.firebasedatabase.app/missions/teamXX.json"
-#define SECRET_EMQX_USER     "robot"
-#define SECRET_EMQX_PASS     "ISI_PASSWORD_EMQX_AKUN_ROBOT"
