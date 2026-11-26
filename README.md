@@ -196,7 +196,7 @@ berubah/terkirim.
 |-------|-----------------|
 | SPEED | 0–255 (tetap) |
 | LENGAN | MIN–MAX dari **Batas Servo** (default 0–180) |
-| CAPIT | MIN–MAX dari **Batas Servo** (default 25–110) |
+| CAPIT | MIN–MAX dari **Batas Servo** (default 25–140) |
 
 - Nilai di luar MIN–MAX otomatis dipotong ke batas terdekat, dan muncul teks kecil merah
   **"dibatasi ke X"**. Contoh dengan default: LENGAN 200 → dikirim 180.
@@ -212,7 +212,7 @@ tema warna, mode Gelap/Terang, token, dan logout. Semua tersimpan di `localStora
 | Servo | Kotak | Default |
 |-------|-------|---------|
 | Lengan | MIN, MAX, NAIK, BAWA, TURUN | 0, 180, 0, 60, 180 |
-| Capit | MIN, MAX, BUKA, TUTUP | 25, 110, 25, 110 |
+| Capit | MIN, MAX, BUKA, TUTUP | 25, 140, 25, 110 |
 
 - **SIMPAN** menyimpan ke browser. Nilainya langsung dipakai oleh kotak angka (KIRIM dipotong ke
   MIN–MAX) dan tombol preset. **RESET DEFAULT** mengembalikan dan menyimpan nilai default.
@@ -345,11 +345,11 @@ Catatan wiring:
   | Servo | Batas firmware | Arti | Posisi awal saat menyala | Tombol dashboard |
   |-------|----------------|------|--------------------------|------------------|
   | Lengan (MG996R, arah terbalik) | `LENGAN_MIN`–`LENGAN_MAX` = 0–180° | 0° = naik mentok atas, 180° = turun maksimal | `LENGAN_AWAL` = 0° (NAIK) | NAIK 0°, BAWA 60°, TURUN 180° |
-  | Capit | `CAPIT_MIN`–`CAPIT_MAX` = 25–110° | 25° = buka, 110° = tutup | `CAPIT_AWAL` = 110° (TUTUP) | BUKA 25°, TUTUP 110° |
+  | Capit | `CAPIT_MIN`–`CAPIT_MAX` = 25–140° | 25° = buka, makin besar makin menutup | `CAPIT_AWAL` = 110° (TUTUP) | BUKA 25°, TUTUP 110° |
 
   Rentang dan preset di dashboard diatur di ⚙ Pengaturan → **Batas Servo** (lihat bagian 9). Pengaturan
   lengan/capit lama yang tersimpan di browser otomatis diganti ke default baru (pengaturan versi 8).
-  Pengaturan lain tidak disentuh.
+  Versi 9: MAX capit yang masih 110 dinaikkan ke 140; nilai lain tetap. Pengaturan lain tidak disentuh.
 - Nama client MQTT tetap `garuda13-phantom` (`MQTT_CLIENT`), tidak lagi `00:00:00:00:00:00`.
 - **Balasan (ACK):** setelah perintah dijalankan, robot mengirim `ack_gerak` / `ack_lengan` /
   `ack_capit` ke Ubidots dalam satu publish dari `loop()` (`kirimAck()`), tidak dari callback MQTT.

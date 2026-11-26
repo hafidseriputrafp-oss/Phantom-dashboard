@@ -23,7 +23,7 @@ const THEMES = [
 ];
 
 const DEFAULT_SETTINGS = {
-  v: 8,
+  v: 9,
   device: "phantom",
   pollInterval: 3,
   theme: "garuda",
@@ -31,7 +31,7 @@ const DEFAULT_SETTINGS = {
   batas: 50,
   mqtt: true,
   lengan: { min: 0, max: 180, naik: 0, bawa: 60, turun: 180 },
-  capit: { min: 25, max: 110, buka: 25, tutup: 110 },
+  capit: { min: 25, max: 140, buka: 25, tutup: 110 },
 };
 
 const ROBOT_VARS = ["suhu_objek", "fb_code", "hotspot"];
@@ -110,6 +110,7 @@ function migrateServo(servo, saved, oldVersion) {
   if (oldVersion < 8 || !saved) return { ...def };
   const out = {};
   for (const key of Object.keys(def)) out[key] = Number(saved[key]);
+  if (servo === "capit" && oldVersion < 9 && out.max === 110) out.max = def.max;
   if (validasiServo(servo, out)) return { ...def };
   return out;
 }
