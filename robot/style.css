@@ -169,6 +169,35 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
 .logo strong { display: block; color: var(--text); font-size: 1.6rem; letter-spacing: 0.2em; line-height: 1; }
 .logo span { display: block; color: var(--accent-2); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; }
 
+.login-title { margin: 0; font-size: 1.3rem; line-height: 1.2; color: var(--text); }
+.login-note { margin: 0; font-size: 0.85rem; }
+.login-card .field { margin: 0; }
+.login-card .error { margin: 0; }
+
+@media (max-height: 430px) {
+  .login { padding: 8px 16px; align-items: center; }
+  .login-card { gap: 6px; padding: 10px 16px; }
+  .login-card .logo svg { width: 30px; height: 30px; }
+  .login-card .logo strong { font-size: 1.2rem; }
+  .login-card .logo span { display: none; }
+  .login-title { font-size: 1.05rem; }
+  .login-note { font-size: 0.78rem; }
+  .login-card .btn.big { min-height: 44px; }
+}
+
+@media (max-height: 320px) {
+  .login { padding: 4px 16px; }
+  .login-card { gap: 4px; padding: 6px 14px; }
+  .login-card .btn.big { min-height: 40px; }
+  .login-note { font-size: 0.72rem; }
+}
+
+.token-btn .lbl { display: none; }
+@media (min-width: 1000px) {
+  .icon-btn.token-btn { display: inline-flex; gap: 6px; width: auto; padding: 0 10px; }
+  .token-btn .lbl { display: inline; font-size: 0.8rem; font-weight: 600; }
+}
+
 /* ---------- Kerangka satu layar ---------- */
 
 .app {

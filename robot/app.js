@@ -10,7 +10,6 @@
  */
 
 const API_BASE = "https://industrial.api.ubidots.com/api";
-const KEY_TOKEN = "phantom.token";
 const KEY_SETTINGS = "phantom.settings";
 const KEY_PORTRAIT = "phantom.portraitOk";
 const KEY_FULL_HINT = "phantom.fullHint";
@@ -131,7 +130,7 @@ function loadSettings() {
 }
 
 const state = {
-  token: store.get(KEY_TOKEN, ""),
+  get token() { return PhantomToken.get(); },
   settings: loadSettings(),
   values: {},
   lastSeen: 0,
@@ -206,7 +205,7 @@ class ApiError extends Error {
 }
 
 function kindFromStatus(status) {
-  if (status === 401 || status === 403) return "auth";
+  if (PhantomToken.isAuthStatus(status)) return "auth";
   if (status === 404) return "notfound";
   if (status === 429) return "ratelimit";
   if (status >= 500) return "server";
@@ -215,8 +214,8 @@ function kindFromStatus(status) {
 
 function errorText(e) {
   switch (e && e.kind) {
-    case "auth": return "Token Ubidots ditolak. Periksa token di Pengaturan.";
-    case "notfound": return `Device "${state.settings.device}" belum ada di Ubidots. Nyalakan robot dulu.`;
+    case "auth": return PhantomToken.PESAN.expired;
+    case "notfound": return "Belum ada data";
     case "ratelimit": return "Batas request Ubidots tercapai (HTTP 429). Jeda otomatis…";
     case "offline": return "HP sedang offline. Periksa internet.";
     case "timeout": return "Ubidots tidak merespons (timeout).";
@@ -283,7 +282,10 @@ async function api(method, path, body, token = state.token) {
     limiter.rateLimited(Number(res.headers.get("Retry-After")));
     throw new ApiError("ratelimit", 429);
   }
-  if (!res.ok) throw new ApiError(kindFromStatus(res.status), res.status);
+  if (!res.ok) {
+    if (PhantomToken.isAuthStatus(res.status) && token === state.token) PhantomToken.expire();
+    throw new ApiError(kindFromStatus(res.status), res.status);
+  }
   limiter.ok();
   const text = await res.text();
   return text ? JSON.parse(text) : null;
@@ -479,12 +481,12 @@ async function readValues(token) {
         return out;
       }
     } catch (e) {
+      if (e.kind === "notfound") return {};
       if (e.kind !== "bad") throw e;
     }
     state.readMode = "v1.6";
   }
   const out = {};
-  let found = 0;
   for (const label of READ_VARS) {
     const path = `/v1.6/devices/${deviceLabel()}/${label}/values/?page_size=1`;
     const r = await limiter.run(() => api("GET", path, null, token), PRIORITY.poll)
@@ -492,10 +494,8 @@ async function readValues(token) {
     const dot = r && r.results && r.results[0];
     if (dot) {
       out[label] = { value: Number(dot.value), ts: Number(dot.timestamp) || 0 };
-      found++;
     }
   }
-  if (!found) throw new ApiError("notfound", 404);
   return out;
 }
 
@@ -1366,8 +1366,6 @@ function openSettings() {
   $("#set-mqtt").checked = s.mqtt;
   isiFormServo(s);
   pesanServo("", false);
-  $("#set-token").value = state.token;
-  $("#set-token").type = "password";
   form.elements.theme.value = s.theme;
   form.elements.mode.value = s.mode;
   $("#settings-error").hidden = true;
@@ -1400,13 +1398,7 @@ function applySettings() {
   }
   state.settings = next;
   saveSettings();
-  const token = $("#set-token").value.trim();
-  const tokenChanged = Boolean(token && token !== state.token);
-  if (tokenChanged) {
-    state.token = token;
-    store.set(KEY_TOKEN, token);
-  }
-  if (tokenChanged || deviceChanged || next.mqtt !== s.mqtt) {
+  if (deviceChanged || next.mqtt !== s.mqtt) {
     fast.fails = 0;
     fastStart();
   }
@@ -1426,21 +1418,18 @@ function applySettings() {
   poll();
 }
 
-/* ---------- Login ---------- */
+/* ---------- Layar token (shared/token.js) ---------- */
 
 function showLogin() {
   releaseAll();
+  clearTimeout(state.pollTimer);
+  if ($("#settings").open) $("#settings").close();
   $("#app").hidden = true;
   setTimeout(() => { if ($("#app").hidden) fastStop(); }, 1500);
-  $("#login").hidden = false;
-  $("#login-device").value = state.settings.device;
-  $("#login-token").value = "";
-  $("#login-error").hidden = true;
   checkOrientation();
 }
 
 function showApp() {
-  $("#login").hidden = true;
   $("#app").hidden = false;
   state.readMode = "v2";
   state.firstSync = true;
@@ -1456,46 +1445,6 @@ function showApp() {
   poll().then(loadHistory);
 }
 
-async function handleLogin(e) {
-  e.preventDefault();
-  const token = $("#login-token").value.trim();
-  const device = $("#login-device").value.trim() || DEFAULT_SETTINGS.device;
-  const err = $("#login-error");
-  const submit = $("#login-submit");
-  err.hidden = true;
-  submit.disabled = true;
-  submit.textContent = "Memeriksa token…";
-  state.settings.device = device;
-  state.readMode = "v2";
-  try {
-    await readValues(token);
-  } catch (ex) {
-    if (ex.kind === "auth") {
-      err.textContent = errorText(ex);
-      err.hidden = false;
-      submit.disabled = false;
-      submit.textContent = "Masuk";
-      return;
-    }
-  }
-  submit.disabled = false;
-  submit.textContent = "Masuk";
-  state.token = token;
-  store.set(KEY_TOKEN, token);
-  saveSettings();
-  showApp();
-}
-
-function logout() {
-  if (!confirm("Logout dan hapus token Ubidots dari browser ini?")) return;
-  emergencyStop();
-  clearTimeout(state.pollTimer);
-  state.token = "";
-  store.remove(KEY_TOKEN);
-  $("#settings").close();
-  showLogin();
-}
-
 /* ---------- Event ---------- */
 
 function typing(e) {
@@ -1503,11 +1452,9 @@ function typing(e) {
 }
 
 function bindEvents() {
-  $("#login-form").addEventListener("submit", handleLogin);
   onTap($("#estop"), emergencyStop);
   $("#btn-settings").addEventListener("click", openSettings);
   $("#btn-full").addEventListener("click", toggleFullscreen);
-  $("#logout").addEventListener("click", logout);
   $("#btn-hotspot").addEventListener("click", () => {
     send("kirim_hotspot", 1);
     vibrate(40);
@@ -1538,15 +1485,6 @@ function bindEvents() {
   $("#settings").addEventListener("close", () => {
     if ($("#settings").returnValue === "save") applySettings();
     else applyTheme(state.settings.theme, state.settings.mode);
-  });
-
-  document.querySelectorAll("[data-reveal]").forEach((b) => {
-    b.addEventListener("click", () => {
-      const f = document.getElementById(b.dataset.reveal);
-      const show = f.type === "password";
-      f.type = show ? "text" : "password";
-      b.textContent = show ? "Sembunyi" : "Lihat";
-    });
   });
 
   document.addEventListener("keydown", (e) => {
@@ -1599,8 +1537,7 @@ function init() {
   setInterval(tick, 1000);
   setInterval(gerakHeartbeat, 200);
   showNet();
-  if (state.token) showApp();
-  else showLogin();
+  PhantomToken.mount({ onReady: showApp, onLock: showLogin });
 }
 
 init();
