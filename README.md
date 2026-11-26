@@ -192,21 +192,35 @@ berubah/terkirim.
 1. Ketuk kotaknya. Keyboard angka muncul.
 2. Ketik nilai, lalu tekan **KIRIM** atau **Enter**.
 
-| Kotak | Batas |
-|-------|-------|
-| SPEED | 0–255 |
-| LENGAN | 0–180 |
-| CAPIT | 25–110 |
+| Kotak | Batas (default) |
+|-------|-----------------|
+| SPEED | 0–255 (tetap) |
+| LENGAN | MIN–MAX dari **Batas Servo** (default 0–180) |
+| CAPIT | MIN–MAX dari **Batas Servo** (default 25–110) |
 
-- Nilai di luar batas otomatis dipotong ke batas terdekat, dan muncul teks kecil merah
-  **"dibatasi ke X"**. Contoh: LENGAN 200 → dikirim 180.
+- Nilai di luar MIN–MAX otomatis dipotong ke batas terdekat, dan muncul teks kecil merah
+  **"dibatasi ke X"**. Contoh dengan default: LENGAN 200 → dikirim 180.
 - Angka di sebelah nama (mis. `LENGAN 60°`) adalah nilai aktif terakhir yang dikirim.
 - Tombol preset NAIK/BAWA/TURUN dan BUKA/TUTUP langsung mengirim sudutnya.
 
 **Pengaturan (⚙):** device label, interval baca data (default 3 detik), batas hotspot (default
-50 °C, ikut dikirim ke robot sebagai `batas_suhu`), **Jalur cepat MQTT** (default aktif), sudut
-tombol NAIK/BAWA/TURUN/BUKA/TUTUP dan batas min/max kotak angka (tidak bisa diisi di luar batas servo),
+50 °C, ikut dikirim ke robot sebagai `batas_suhu`), **Jalur cepat MQTT** (default aktif), **Batas Servo**,
 tema warna, mode Gelap/Terang, token, dan logout. Semua tersimpan di `localStorage` browser itu.
+
+**Batas Servo (di ⚙ Pengaturan).** Bagian ini dipakai untuk mengatur rentang dan tombol preset:
+
+| Servo | Kotak | Default |
+|-------|-------|---------|
+| Lengan | MIN, MAX, NAIK, BAWA, TURUN | 0, 180, 0, 60, 180 |
+| Capit | MIN, MAX, BUKA, TUTUP | 25, 110, 25, 110 |
+
+- **SIMPAN** menyimpan ke browser. Nilainya langsung dipakai oleh kotak angka (KIRIM dipotong ke
+  MIN–MAX) dan tombol preset. **RESET DEFAULT** mengembalikan dan menyimpan nilai default.
+- **Validasi:** semua angka 0–180, MIN harus lebih kecil dari MAX, dan setiap preset harus di antara
+  MIN dan MAX. Kalau salah, muncul pesan merah dan tidak ada yang disimpan. Tombol Simpan utama juga
+  ditahan sampai batasnya benar.
+- Batas di firmware (`LENGAN_MIN/MAX`, `CAPIT_MIN/MAX`) tetap berlaku. Angka di luar batas firmware
+  akan dipotong oleh robot, dan baris status menampilkan sudut hasil robot.
 
 ### Kecepatan respons perintah
 
@@ -333,9 +347,9 @@ Catatan wiring:
   | Lengan (MG996R, arah terbalik) | `LENGAN_MIN`–`LENGAN_MAX` = 0–180° | 0° = naik mentok atas, 180° = turun maksimal | `LENGAN_AWAL` = 0° (NAIK) | NAIK 0°, BAWA 60°, TURUN 180° |
   | Capit | `CAPIT_MIN`–`CAPIT_MAX` = 25–110° | 25° = buka, 110° = tutup | `CAPIT_AWAL` = 110° (TUTUP) | BUKA 25°, TUTUP 110° |
 
-  Kotak angka dan isian sudut di ⚙ Pengaturan dashboard dibatasi ke rentang yang sama. Pengaturan
-  lengan/capit lama yang tersimpan di browser (termasuk tombol PARKIR lama) otomatis diganti ke nilai
-  di atas. Pengaturan lain tidak disentuh.
+  Rentang dan preset di dashboard diatur di ⚙ Pengaturan → **Batas Servo** (lihat bagian 9). Pengaturan
+  lengan/capit lama yang tersimpan di browser otomatis diganti ke default baru (pengaturan versi 8).
+  Pengaturan lain tidak disentuh.
 - Nama client MQTT tetap `garuda13-phantom` (`MQTT_CLIENT`), tidak lagi `00:00:00:00:00:00`.
 - **Balasan (ACK):** setelah perintah dijalankan, robot mengirim `ack_gerak` / `ack_lengan` /
   `ack_capit` ke Ubidots dalam satu publish dari `loop()` (`kirimAck()`), tidak dari callback MQTT.
