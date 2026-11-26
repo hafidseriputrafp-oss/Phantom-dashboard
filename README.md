@@ -195,11 +195,11 @@ berubah/terkirim.
 | Kotak | Batas |
 |-------|-------|
 | SPEED | 0–255 |
-| LENGAN | 0–150 |
+| LENGAN | 0–180 |
 | CAPIT | 25–110 |
 
 - Nilai di luar batas otomatis dipotong ke batas terdekat, dan muncul teks kecil merah
-  **"dibatasi ke X"**. Contoh: LENGAN 200 → dikirim 150.
+  **"dibatasi ke X"**. Contoh: LENGAN 200 → dikirim 180.
 - Angka di sebelah nama (mis. `LENGAN 60°`) adalah nilai aktif terakhir yang dikirim.
 - Tombol preset NAIK/BAWA/TURUN dan BUKA/TUTUP langsung mengirim sudutnya.
 
@@ -330,7 +330,7 @@ Catatan wiring:
 
   | Servo | Batas firmware | Arti | Posisi awal saat menyala | Tombol dashboard |
   |-------|----------------|------|--------------------------|------------------|
-  | Lengan (MG996R, arah terbalik) | `LENGAN_MIN`–`LENGAN_MAX` = 0–150° | 0° = naik mentok atas, 150° = turun maksimal | `LENGAN_AWAL` = 0° (NAIK) | NAIK 0°, BAWA 60°, TURUN 150° |
+  | Lengan (MG996R, arah terbalik) | `LENGAN_MIN`–`LENGAN_MAX` = 0–180° | 0° = naik mentok atas, 180° = turun maksimal | `LENGAN_AWAL` = 0° (NAIK) | NAIK 0°, BAWA 60°, TURUN 180° |
   | Capit | `CAPIT_MIN`–`CAPIT_MAX` = 25–110° | 25° = buka, 110° = tutup | `CAPIT_AWAL` = 110° (TUTUP) | BUKA 25°, TUTUP 110° |
 
   Kotak angka dan isian sudut di ⚙ Pengaturan dashboard dibatasi ke rentang yang sama. Pengaturan
