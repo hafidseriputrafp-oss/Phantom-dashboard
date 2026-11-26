@@ -90,9 +90,9 @@ const bool     MOTOR_KANAN_BALIK = true;
 const uint8_t  SPEED_DEFAULT     = 150;
 const float    CURVE_RATIO       = 0.4;     // kecepatan roda sisi dalam saat belok melengkung
 
-const int LENGAN_MIN = 0, LENGAN_MAX = 180;
-const int CAPIT_MIN = 20, CAPIT_MAX = 110;     // BUKA 20, TUTUP 110 (hasil kalibrasi)
-const int LENGAN_AWAL = 135, CAPIT_AWAL = 110;
+const int LENGAN_MIN = 0, LENGAN_MAX = 120;    // MG996R terbalik: 0 = naik mentok, 120 = turun maksimal
+const int CAPIT_MIN = 25, CAPIT_MAX = 110;     // 25 = buka, 110 = tutup
+const int LENGAN_AWAL = 0, CAPIT_AWAL = 110;
 const int SERVO_MIN_US = 500, SERVO_MAX_US = 2400;
 
 // ---------- OBJEK ----------

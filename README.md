@@ -305,10 +305,16 @@ Catatan wiring:
 - Kalau arah roda terbalik, ubah `MOTOR_KIRI_BALIK` / `MOTOR_KANAN_BALIK` (hasil tes: roda kanan
   terbalik, jadi `MOTOR_KANAN_BALIK = true`). Kalau belok melengkung terlalu tajam/landai, ubah
   `CURVE_RATIO` (kecepatan roda sisi dalam, default 0,4).
-- Sudut servo dikirim langsung dari dashboard (derajat) dan dibatasi di firmware: capit
-  `CAPIT_MIN`–`CAPIT_MAX` = 20–110° (BUKA 20°, TUTUP 110°, hasil kalibrasi), lengan
-  `LENGAN_MIN`–`LENGAN_MAX` (sementara 0–180°, ubah setelah kalibrasi). Posisi awal saat menyala:
-  lengan 135° (PARKIR), capit 110° (TUTUP).
+- Sudut servo dikirim langsung dari dashboard (derajat) dan dibatasi di firmware dengan `constrain()`.
+  Batas hasil kalibrasi di robot asli:
+
+  | Servo | Batas firmware | Arti | Posisi awal saat menyala | Tombol dashboard |
+  |-------|----------------|------|--------------------------|------------------|
+  | Lengan (MG996R, arah terbalik) | `LENGAN_MIN`–`LENGAN_MAX` = 0–120° | 0° = naik mentok atas, 120° = turun maksimal | `LENGAN_AWAL` = 0° (PARKIR) | TURUN 120°, BAWA 60°, PARKIR 0° |
+  | Capit | `CAPIT_MIN`–`CAPIT_MAX` = 25–110° | 25° = buka, 110° = tutup | `CAPIT_AWAL` = 110° (TUTUP) | BUKA 25°, TUTUP 110° |
+
+  Slider dan isian sudut di ⚙ Pengaturan dashboard dibatasi ke rentang yang sama. Pengaturan lama yang
+  tersimpan di browser (default lama atau di luar batas) otomatis diganti ke nilai di atas.
 - Nama client MQTT tetap `garuda13-phantom` (`MQTT_CLIENT`), tidak lagi `00:00:00:00:00:00`.
 - **Balasan (ACK):** setelah perintah dijalankan, robot mengirim `ack_gerak` / `ack_lengan` /
   `ack_capit` ke Ubidots dalam satu publish dari `loop()` (`kirimAck()`), tidak dari callback MQTT.

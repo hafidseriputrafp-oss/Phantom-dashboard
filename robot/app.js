@@ -23,15 +23,15 @@ const THEMES = [
 ];
 
 const DEFAULT_SETTINGS = {
-  v: 4,
+  v: 5,
   device: "phantom",
   pollInterval: 3,
   theme: "garuda",
   mode: "dark",
   batas: 50,
   mqtt: true,
-  lengan: { turun: 25, bawa: 60, parkir: 135, min: 25, max: 135 },
-  capit: { buka: 20, tutup: 110, min: 20, max: 110 },
+  lengan: { turun: 120, bawa: 60, parkir: 0, min: 0, max: 120 },
+  capit: { buka: 25, tutup: 110, min: 25, max: 110 },
 };
 
 const ROBOT_VARS = ["suhu_objek", "fb_code", "hotspot"];
@@ -86,18 +86,30 @@ function num(v, fallback) {
   return n;
 }
 
-const OLD_CAPIT = { buka: 118, tutup: 90, min: 40, max: 150 };
+const SERVO_LIMITS = { lengan: { min: 0, max: 120 }, capit: { min: 25, max: 110 } };
+const OLD_SERVO_DEFAULTS = {
+  lengan: [{ turun: 25, bawa: 60, parkir: 135, min: 25, max: 135 }],
+  capit: [{ buka: 118, tutup: 90, min: 40, max: 150 }, { buka: 20, tutup: 110, min: 20, max: 110 }],
+};
+
+function migrateServo(servo, saved, oldVersion) {
+  const lim = SERVO_LIMITS[servo];
+  const out = { ...DEFAULT_SETTINGS[servo], ...(saved || {}) };
+  for (const key of Object.keys(DEFAULT_SETTINGS[servo])) {
+    const v = Number(out[key]);
+    const wasDefault = oldVersion < 5 && OLD_SERVO_DEFAULTS[servo].some((d) => d[key] === v);
+    if (!Number.isFinite(v) || v < lim.min || v > lim.max || wasDefault) out[key] = DEFAULT_SETTINGS[servo][key];
+    else out[key] = v;
+  }
+  return out;
+}
 
 function loadSettings() {
   const saved = store.get(KEY_SETTINGS, {}) || {};
   const s = { ...DEFAULT_SETTINGS, ...saved };
-  s.lengan = { ...DEFAULT_SETTINGS.lengan, ...(saved.lengan || {}) };
-  s.capit = { ...DEFAULT_SETTINGS.capit, ...(saved.capit || {}) };
-  if ((Number(saved.v) || 0) < 4 && saved.capit) {
-    for (const [k, old] of Object.entries(OLD_CAPIT)) {
-      if (Number(saved.capit[k]) === old) s.capit[k] = DEFAULT_SETTINGS.capit[k];
-    }
-  }
+  const oldVersion = Number(saved.v) || 0;
+  s.lengan = migrateServo("lengan", saved.lengan, oldVersion);
+  s.capit = migrateServo("capit", saved.capit, oldVersion);
   s.batas = num(saved.batas, DEFAULT_SETTINGS.batas);
   s.pollInterval = Math.max(1, num(s.pollInterval, DEFAULT_SETTINGS.pollInterval));
   if (!THEMES.some((t) => t.id === s.theme)) s.theme = DEFAULT_SETTINGS.theme;
@@ -1293,7 +1305,8 @@ function applySettings() {
     capit: { ...s.capit },
   };
   for (const [servo, key] of ANGLE_FIELDS) {
-    next[servo][key] = Math.min(180, Math.max(0, Math.round(num(form.elements[`${servo}-${key}`].value, s[servo][key]))));
+    const lim = SERVO_LIMITS[servo];
+    next[servo][key] = Math.min(lim.max, Math.max(lim.min, Math.round(num(form.elements[`${servo}-${key}`].value, s[servo][key]))));
   }
   state.settings = next;
   saveSettings();
