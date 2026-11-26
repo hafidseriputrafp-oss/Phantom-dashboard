@@ -19,7 +19,7 @@ function statusOf(cfg) {
   const st = device && home.statuses[device];
   if (!device) return { cls: "", text: "Tanpa device utama" };
   if (!st) return { cls: "", text: getToken() ? "Memeriksa…" : "Belum login" };
-  if (st.error) return { cls: "offline", text: st.error.kind === "notfound" ? "Device belum ada" : "Gagal membaca" };
+  if (st.error) return { cls: "offline", text: st.error.kind === "notfound" ? "Belum ada data" : "Gagal membaca" };
   if (!st.lastSeen) return { cls: "offline", text: "Belum ada data" };
   const age = Date.now() - st.lastSeen;
   const online = age < (cfg.onlineS || 60) * 1000;
@@ -217,38 +217,24 @@ function openSettings() {
   const look = loadLook();
   form.elements.theme.value = look.theme;
   form.elements.mode.value = look.mode;
-  $("#set-token").value = getToken();
   $("#settings").returnValue = "";
   $("#settings").showModal();
 }
 
-async function applySettings() {
+function applySettings() {
   const form = $("#settings-form");
   saveLook(form.elements.theme.value, form.elements.mode.value);
-  const token = $("#set-token").value.trim();
-  if (token && token !== getToken()) {
-    try {
-      await verifyToken(token);
-      setToken(token);
-      toast("Token diperbarui");
-      start();
-    } catch (e) {
-      toast(errorText(e), true);
-    }
-  } else {
-    toast("Pengaturan disimpan");
-  }
+  toast("Pengaturan disimpan");
 }
 
 function showLogin() {
   clearTimeout(home.timer);
   $("#app").hidden = true;
-  $("#login").hidden = false;
-  $("#login-token").value = "";
+  $("#settings").close();
+  setCloud("local");
 }
 
 async function start() {
-  $("#login").hidden = true;
   $("#app").hidden = false;
   renderGrid();
   const { changed } = await syncCloud();
@@ -257,7 +243,6 @@ async function start() {
 }
 
 function bindEvents() {
-  bindLogin(start);
   $("#open-settings").addEventListener("click", openSettings);
   $("#add-dashboard").addEventListener("click", () => openDashDialog(null));
   $("#restore-builtins").addEventListener("click", restoreBuiltins);
@@ -271,13 +256,6 @@ function bindEvents() {
   $("#settings").addEventListener("close", () => {
     if ($("#settings").returnValue === "save") applySettings();
     else applyLook(loadLook().theme, loadLook().mode);
-  });
-  $("#logout").addEventListener("click", () => {
-    if (!confirm("Logout dan hapus token Ubidots dari browser ini? (Berlaku juga untuk dashboard Robot)")) return;
-    clearToken();
-    $("#settings").close();
-    setCloud("local");
-    showLogin();
   });
   $("#dash-form").addEventListener("submit", (e) => {
     if (!e.submitter || e.submitter.value !== "save") return;
@@ -302,8 +280,7 @@ function init() {
   bindCloudPill($("#cloud-pill"));
   bindEvents();
   startClock();
-  if (getToken()) start();
-  else showLogin();
+  PhantomToken.mount({ onReady: start, onLock: showLogin });
 }
 
 init();

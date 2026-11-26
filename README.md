@@ -8,7 +8,7 @@ Situsnya statis untuk GitHub Pages: tanpa backend dan tanpa build tool.
 | `/` ([`index.html`](index.html), [`home.js`](home.js)) | **Beranda**: daftar dashboard, tambah/ubah/duplikat/hapus |
 | `/robot/` ([`robot/`](robot/)) | **Robot Phantom**: dashboard kontrol robot rescue (D-pad, STOP darurat, heartbeat) |
 | `/dash/?id=<id>` ([`dash/`](dash/)) | **Builder**: menampilkan & mengedit dashboard buatan sendiri |
-| [`shared/`](shared/) | Kode bersama: token, tema, API Ubidots + antrean request, sinkron cloud |
+| [`shared/`](shared/) | Kode bersama: `token.js` (layar token untuk semua halaman), tema, API Ubidots + antrean request, sinkron cloud |
 | [`firmware/`](firmware/) | Firmware ESP32 robot Phantom: `phantom_tes` (latihan) dan `phantom_lomba` (kirim ke web dosen) |
 
 Setelah GitHub Pages aktif:
@@ -30,9 +30,29 @@ Setelah GitHub Pages aktif:
 
 ## 2. Login & sinkron antar perangkat
 
-- **Token Ubidots tidak pernah disimpan di repo.** Token dimasukkan di halaman login dan disimpan
-  di `localStorage` browser (key `phantom.token`, sama dengan dashboard robot), jadi cukup login
-  sekali untuk semua halaman. Logout ada di ⚙ Pengaturan.
+- **Token Ubidots tidak pernah disimpan di repo atau di URL.** Semua halaman (Beranda, `/robot/`,
+  `/dash/`) memakai satu file bersama [`shared/token.js`](shared/token.js):
+  1. Saat dibuka tanpa token, muncul layar **"Masukkan Token Ubidots"** (kolom token + tombol
+     Tampilkan/Sembunyikan + **Masuk**).
+  2. **Masuk** mengecek token dengan satu request ringan `GET /api/v2.0/devices/?page_size=1`
+     (header `X-Auth-Token`):
+     - 200 → token disimpan di `localStorage` key **`phantom_ubidots_token`**, lalu dashboard terbuka;
+     - 401/403 → **"Token tidak valid"**;
+     - gagal jaringan → **"Tidak ada koneksi"**.
+  3. Kunjungan berikutnya langsung masuk. Kalau di tengah pemakaian Ubidots menjawab 401/402/403
+     (token dicabut atau kuota habis), semua halaman kembali ke layar token dengan pesan
+     **"Token tidak berlaku, masukkan token baru"**.
+  4. Tombol kecil **🔑 Ganti token** di header setiap dashboard menghapus token lalu kembali ke layar token.
+  - Cukup input sekali untuk semua halaman. Token lama (key `phantom.token`) dipindah otomatis.
+- **Akun Ubidots baru (masih kosong):** setelah token diterima, dashboard menyiapkan akun sekali di
+  latar belakang:
+  - device `phantom` dan variabel kontrol (`gerak` 0, `speed` 150, `lengan` 0, `capit` 110,
+    `kirim_hotspot` 0, `batas_suhu` = batas di Pengaturan) ditulis sebagai nilai awal. Ini dilakukan hanya
+    untuk variabel yang belum ada;
+  - variabel sensor/ACK robot dan device `logger` (`suhu_objek`, `data_ke`, `http_code`) dibuat kosong,
+    tanpa data palsu.
+
+  Selama variabel belum punya data, kartu menampilkan **"Belum ada data"**, bukan error.
 - **Konfigurasi semua dashboard disimpan di Ubidots**, supaya sama di HP dan laptop:
   - device **`dashboard-config`**, satu variabel per dashboard: **`cfg_<id>`** (mis. `cfg_logger`);
   - **value** dot = nomor versi; **context** dot = isi JSON konfigurasi;
@@ -136,17 +156,16 @@ Kalau sudah diubah sendiri, dashboard itu tidak disentuh; pakai **Reset ke prese
 | `batas_suhu`    | dashboard → robot  | Batas suhu hotspot (°C), diatur di ⚙ Pengaturan                  |
 | `kirim_hotspot` | dashboard → robot  | 1 = minta robot kirim hotspot sekarang (tombol cadangan)         |
 
-Variabel sensor dibuat otomatis saat robot mengirim data. Variabel kontrol dibuat otomatis saat
-tombol di dashboard pertama kali ditekan. Sebaiknya kirim sekali setiap kontrol sebelum robot
-dinyalakan, supaya subscribe MQTT langsung mendapat nilai.
+Di akun baru, semua variabel di atas disiapkan otomatis oleh dashboard setelah token diterima
+(lihat bagian 2), jadi subscribe MQTT robot langsung mendapat nilai.
 
 ## 8. Robot: isi token
 
-1. Buka `/robot/` (atau kartu **Robot Phantom** di Beranda). Kalau sudah login di Beranda, token langsung terpakai.
-   Kalau belum, masukkan **Token Ubidots** dan **Device label** (default `phantom`), lalu **Masuk**.
-2. Token dicek ke Ubidots. Kalau ditolak, akan muncul pesan "Token Ubidots ditolak".
-3. Token **hanya disimpan di `localStorage` browser itu**, tidak pernah di repo. Untuk menghapusnya,
-   buka ⚙ **Pengaturan → Logout & hapus token**.
+1. Buka `/robot/` (atau kartu **Robot Phantom** di Beranda). Kalau sudah masuk di Beranda, token langsung terpakai.
+   Kalau belum, isi token di layar **"Masukkan Token Ubidots"**, lalu **Masuk**. Device label (default
+   `phantom`) diubah di ⚙ Pengaturan.
+2. Token dicek ke Ubidots (lihat bagian 2).
+3. Untuk pindah akun Ubidots, tekan **🔑** (Ganti token) di header, lalu masukkan token akun baru.
 
 ## 9. Robot: menggunakan dashboard
 
@@ -205,7 +224,7 @@ berubah/terkirim.
 
 **Pengaturan (⚙):** device label, interval baca data (default 3 detik), batas hotspot (default
 50 °C, ikut dikirim ke robot sebagai `batas_suhu`), **Jalur cepat MQTT** (default aktif), **Batas Servo**,
-tema warna, mode Gelap/Terang, token, dan logout. Semua tersimpan di `localStorage` browser itu.
+tema warna, dan mode Gelap/Terang. Semua tersimpan di `localStorage` browser itu. Token diganti lewat tombol 🔑.
 
 **Batas Servo (di ⚙ Pengaturan).** Bagian ini dipakai untuk mengatur rentang dan tombol preset:
 
@@ -306,7 +325,9 @@ Keduanya sudah diuji kompilasi (`arduino-cli`, ESP32 Dev Module, core esp32 3.3.
 > ```
 
 **Kredensial (`secrets.h`):** repo ini publik, jadi token Ubidots, WiFi, dan alamat web dosen **tidak**
-ditulis di sketch. Di tiap folder sketch, salin `secrets.example.h` menjadi `secrets.h`, lalu isi:
+ditulis di sketch. Isi `secrets.h` hanya **nilai default**; WiFi dan token bisa diganti lewat portal
+**Phantom-Setup** tanpa upload ulang (lihat bagian 12). Di tiap folder sketch, salin `secrets.example.h`
+menjadi `secrets.h`, lalu isi:
 
 ```cpp
 #define SECRET_WIFI_SSID     "nama hotspot HP"
@@ -317,8 +338,9 @@ ditulis di sketch. Di tiap folder sketch, salin `secrets.example.h` menjadi `sec
 
 `secrets.h` sudah masuk `.gitignore`, jadi tidak ikut ter-upload ke GitHub.
 
-**Pin (ESP32 30-pin)**. Pin strapping (0, 2, 12, 15) tidak dipakai; GPIO5 hanya dipakai sebagai CS
-microSD (pin SS bawaan VSPI, aman karena CS dalam keadaan HIGH saat boot).
+**Pin (ESP32 30-pin)**. Pin strapping 2, 12, 15 tidak dipakai. GPIO0 hanya **dibaca** sebagai tombol BOOT
+(portal Phantom-Setup). GPIO5 hanya dipakai sebagai CS microSD (pin SS bawaan VSPI, aman karena CS dalam
+keadaan HIGH saat boot).
 
 | Fungsi                   | GPIO |
 |--------------------------|------|
@@ -327,6 +349,7 @@ microSD (pin SS bawaan VSPI, aman karena CS dalam keadaan HIGH saat boot).
 | L298N ENA (PWM kiri) / IN1 / IN2 | 25 / 26 / 27 |
 | L298N IN3 / IN4 / ENB (PWM kanan) | 32 / 33 / 4 |
 | Servo lengan / capit     | 16 / 17 |
+| Tombol BOOT (portal Phantom-Setup) | 0 |
 
 Catatan wiring:
 
@@ -401,17 +424,39 @@ seperti contoh kode dosen:
 - Pengiriman HTTPS berjalan di core ESP32 yang lain, jadi kontrol motor dan servo tidak tertahan saat
   menunggu jawaban server.
 
-## 12. WiFi: hanya lewat hotspot HP
+## 12. WiFi & token Ubidots: hotspot HP + portal Phantom-Setup
 
-Sesuai aturan lomba, robot **tidak pernah membuat WiFi/hotspot sendiri**. ESP32 hanya berjalan
-sebagai *station* (`WIFI_STA`) dan terhubung ke hotspot HP yang namanya ditulis di `secrets.h`.
+Saat jalan normal, ESP32 hanya berjalan sebagai *station* (`WIFI_STA`) dan terhubung ke hotspot HP.
+Robot **tidak membuat WiFi sendiri**, kecuali saat portal setup sengaja dibuka.
 
-1. Nyalakan hotspot HP dengan nama & password yang sama dengan `SECRET_WIFI_SSID` / `SECRET_WIFI_PASS`.
+1. Nyalakan hotspot HP.
 2. Nyalakan robot. Ia mencoba terhubung, dan mengulang tiap 30 detik kalau gagal.
-3. Buka Serial Monitor (115200) untuk melihat IP dan status MQTT/Firebase.
+3. Buka Serial Monitor (115200) untuk melihat IP, status MQTT/Firebase, dan sumber token
+   (`Token Ubidots: BBUS-...abcd (tersimpan dari portal)` atau `(default program)`).
 
-Selama WiFi atau MQTT putus, motor selalu berhenti. Untuk mengganti hotspot, ubah `secrets.h` lalu
-upload ulang.
+Selama WiFi atau MQTT putus, motor selalu berhenti.
+
+**Mengganti WiFi atau token Ubidots tanpa upload ulang (portal Phantom-Setup):**
+
+1. Robot menyala, lalu **tahan tombol BOOT di ESP32 selama 3 detik**. Motor berhenti, lalu robot restart ke
+   mode setup. Jangan menahan BOOT *sebelum* atau *saat* robot dinyalakan, karena ESP32 malah masuk mode
+   upload.
+2. Di HP, sambungkan ke WiFi **`Phantom-Setup`** (password `phantom123`). Halaman setup biasanya terbuka
+   sendiri; kalau tidak, buka `http://192.168.4.1`.
+3. Isi **Nama WiFi**, **Password WiFi**, dan **Token Ubidots** (tombol *Tampilkan / sembunyikan token*
+   tersedia), lalu **Simpan & restart**. Kolom yang dikosongkan tidak diubah.
+4. Robot restart dan memakai isian baru. Semua isian disimpan di NVS (Preferences, namespace `phantom`,
+   key `ssid`, `pass`, `token`).
+5. Tombol **Pakai default program** menghapus isian tersimpan, sehingga robot kembali memakai `secrets.h`.
+
+Hal lain yang perlu diketahui:
+- Portal menutup sendiri setelah 5 menit, lalu robot kembali ke mode normal.
+- Saat boot, token dibaca dari NVS. Kalau kosong, robot memakai `SECRET_UBIDOTS_TOKEN` dari `secrets.h`.
+- Token disalin ke buffer global `ubidotsToken`, karena library UbidotsESPMQTT hanya menyimpan
+  *pointer* token. Objek `Ubidots` baru dibuat di `setup()` setelah token dibaca.
+- Logger (program lomba) memakai token yang sama untuk POST ke device `logger`.
+
+> Selama lomba, jangan buka portal. Robot hanya menjadi WiFi `Phantom-Setup` selama portal terbuka.
 
 Serial Monitor juga menampilkan heap bebas tiap 10 detik (`DEBUG_HEAP = true`), untuk memastikan memori
 cukup saat koneksi HTTPS ke web dosen dan data logger berjalan. Ubah ke `false` kalau log tidak diperlukan.

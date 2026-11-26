@@ -123,7 +123,7 @@ function refreshSoon() {
 function widgetError(w, keyErr) {
   const e = keyErr || state.deviceErr[w.device];
   if (!e) return "";
-  if (e.kind === "notfound") return `Device "${w.device}" atau variabel "${w.variable || "-"}" belum ada.`;
+  if (e.kind === "notfound") return "Belum ada data";
   return errorText(e);
 }
 
@@ -1096,8 +1096,15 @@ function loadCfg() {
   return true;
 }
 
+function lockDash() {
+  $("#app").hidden = true;
+  $("#not-found").hidden = true;
+  clearTimeout(state.valuesTimer);
+  clearTimeout(state.historyTimer);
+  if ($("#settings").open) $("#settings").close();
+}
+
 async function start() {
-  $("#login").hidden = true;
   if (state.id === "robot") return location.replace("../robot/");
   const known = loadCfg();
   if (known) {
@@ -1118,7 +1125,6 @@ async function start() {
 }
 
 function bindEvents() {
-  bindLogin(start);
   $("#edit-toggle").addEventListener("click", () => setEditing(!state.editing));
   $("#edit-done").addEventListener("click", () => setEditing(false));
   $("#add-widget").addEventListener("click", () => openEditor(null));
@@ -1180,10 +1186,7 @@ function init() {
   bindCloudPill($("#cloud-pill"));
   bindEvents();
   startClock();
-  if (getToken()) start();
-  else {
-    $("#login").hidden = false;
-  }
+  PhantomToken.mount({ onReady: start, onLock: lockDash });
 }
 
 init();

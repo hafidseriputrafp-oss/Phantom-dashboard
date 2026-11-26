@@ -8,25 +8,27 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Rajdhani:wght@500;600;700&display=swap">
-  <link rel="stylesheet" href="../shared/base.css?v=20261121">
+  <link rel="stylesheet" href="../shared/base.css?v=20261133">
   <link rel="stylesheet" href="../shared/hub.css?v=20261121">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js" defer></script>
-  <script src="../shared/core.js?v=20261126" defer></script>
-  <script src="dash.js?v=20261126" defer></script>
+  <script src="../shared/token.js?v=20261133" defer></script>
+  <script src="../shared/core.js?v=20261133" defer></script>
+  <script src="dash.js?v=20261133" defer></script>
 </head>
 <body>
   <section id="login" class="login" hidden>
-    <form id="login-form" class="card login-card" autocomplete="off">
+    <form id="login-form" class="card login-card" autocomplete="off" novalidate>
       <div class="logo logo-lg">
         <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 3 6 10v13c0 11 7.6 19.4 18 22 10.4-2.6 18-11 18-22V10L24 3Z" fill="none" stroke="currentColor" stroke-width="3"/><path d="M14 25h7l3-7 4 13 3-6h3" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <div><strong>PHANTOM</strong><span>Dashboard Hub</span></div>
       </div>
-      <p class="muted">Masukkan token Ubidots. Token hanya disimpan di browser ini dan dipakai bersama semua dashboard.</p>
+      <h1 class="login-title">Masukkan Token Ubidots</h1>
+      <p class="muted login-note">Token hanya disimpan di browser ini dan dipakai bersama Beranda, Robot, dan Data Logger.</p>
       <label class="field">
         <span>Token Ubidots</span>
         <div class="with-btn">
-          <input id="login-token" type="password" required placeholder="BBUS-xxxxxxxx" spellcheck="false" autocapitalize="off">
-          <button type="button" class="btn ghost" data-reveal="login-token">Lihat</button>
+          <input id="login-token" type="password" placeholder="BBUS-xxxxxxxx" spellcheck="false" autocapitalize="off" autocomplete="off">
+          <button type="button" class="btn ghost" id="login-reveal" aria-controls="login-token">Tampilkan</button>
         </div>
       </label>
       <p id="login-error" class="error" role="alert" hidden></p>
@@ -45,6 +47,7 @@
       <div class="clock" aria-label="Jam WIB"><span id="clock-time">--:--:--</span><small id="clock-date"></small></div>
       <div class="top-actions">
         <button class="btn ghost top-btn" id="edit-toggle" aria-pressed="false"><span aria-hidden="true">✎</span><span class="lbl">Edit</span></button>
+        <button class="btn ghost top-btn" type="button" data-token-change aria-label="Ganti token" title="Ganti token"><span aria-hidden="true">🔑</span><span class="lbl">Ganti token</span></button>
         <button class="btn top-btn settings-btn" id="open-settings" aria-label="Pengaturan"><span aria-hidden="true">⚙</span><span class="lbl">Pengaturan</span></button>
       </div>
     </header>

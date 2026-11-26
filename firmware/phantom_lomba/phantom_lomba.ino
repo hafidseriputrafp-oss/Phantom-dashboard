@@ -3,14 +3,19 @@
  * Board  : ESP32 Dev Module
  * Library: Ubidots MQTT for ESP32 and ESP8266 (UbidotsESPMQTT.h) + PubSubClient,
  *          ESP32Servo, Adafruit MLX90614, RTClib (Adafruit), SD/SPI/Wire (bawaan core ESP32)
- * Kredensial ada di secrets.h (salin dari secrets.example.h, jangan di-commit).
- * WiFi hanya mode STA: robot terhubung ke hotspot HP, tidak pernah membuat WiFi sendiri.
+ * Kredensial default ada di secrets.h (salin dari secrets.example.h, jangan di-commit).
+ * WiFi & token Ubidots bisa diganti tanpa upload ulang: tahan tombol BOOT 3 detik saat robot
+ * menyala -> robot restart sebagai WiFi "Phantom-Setup" (hanya untuk setup, tutup sendiri 5 menit).
+ * Saat jalan normal robot hanya mode STA ke hotspot HP.
  */
 
 #include <Wire.h>
 #include <SPI.h>
 #include <SD.h>
 #include <WiFi.h>
+#include <Preferences.h>
+#include <WebServer.h>
+#include <DNSServer.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -35,12 +40,17 @@
 #define PIN_MOTOR_ENB      4    // L298N ENB -> PWM roda kanan
 #define PIN_SERVO_LENGAN   16
 #define PIN_SERVO_CAPIT    17
+#define PIN_TOMBOL_SETUP   0    // tombol BOOT: tahan 3 dtk = portal Phantom-Setup
 
 // ---------- KREDENSIAL ----------
-char UBIDOTS_TOKEN[] = SECRET_UBIDOTS_TOKEN;
+const char* TOKEN_DEFAULT     = SECRET_UBIDOTS_TOKEN;   // dipakai kalau portal belum diisi
+const char* WIFI_SSID_DEFAULT = SECRET_WIFI_SSID;
+const char* WIFI_PASS_DEFAULT = SECRET_WIFI_PASS;
+char ubidotsToken[80];   // library Ubidots menyimpan pointer token, jadi buffer global
+char wifiSsid[33];
+char wifiPass[65];
+const char* sumberToken = "default program";
 char DEVICE_LABEL[]  = "phantom";
-const char* WIFI_SSID = SECRET_WIFI_SSID;
-const char* WIFI_PASS = SECRET_WIFI_PASS;
 const char* FIREBASE_URL = SECRET_FIREBASE_URL;   // .../missions/teamXX.json
 
 // ---------- VARIABEL UBIDOTS ----------
@@ -68,13 +78,19 @@ const unsigned long HEARTBEAT_MS        = 1500;   // dashboard kirim ulang "gera
 const unsigned long FAILSAFE_TIMEOUT_MS = HEARTBEAT_MS + 1500;   // toleransi antrean request + jaringan
 const unsigned long MQTT_RETRY_MS       = 3000;
 const unsigned long WIFI_RETRY_MS       = 30000;
+const unsigned long SETUP_TAHAN_MS      = 3000;     // lama tahan tombol BOOT
+const unsigned long SETUP_TIMEOUT_MS    = 300000;   // portal tutup sendiri setelah 5 menit
+const unsigned long SETUP_RESTART_MS    = 1500;
+const char*         SETUP_AP_SSID       = "Phantom-Setup";
+const char*         SETUP_AP_PASS       = "phantom123";
+const char*         PREFS_NAMA          = "phantom";
 const long          WIB_OFFSET_S        = 7 * 3600;
 
 const unsigned long LOGGER_INTERVAL_MS   = 10000;
 const unsigned long LOGGER_TUNGGU_MAX_MS = 30000;
 const unsigned long SD_RETRY_MS          = 30000;
 const uint16_t      LOGGER_TIMEOUT_MS    = 5000;
-const char*         LOGGER_URL           = "https://industrial.api.ubidots.com/api/v1.6/devices/logger";
+const char*         LOGGER_URL           = "https://industrial.api.ubidots->com/api/v1.6/devices/logger";
 const size_t        LOGGER_BODY_MAX      = 384;
 
 const unsigned long FIREBASE_DATA_MS    = 5000;   // kirim {"suhu":..,"wifi":true} ke web dosen
@@ -104,7 +120,10 @@ enum Move {
 const char* MOVE_NAMES[] = { "STOP", "MAJU", "MUNDUR", "PUTAR KIRI", "PUTAR KANAN", "MAJU-KIRI", "MAJU-KANAN", "MUNDUR-KIRI", "MUNDUR-KANAN" };
 
 char MQTT_CLIENT[] = "garuda13-phantom";
-Ubidots ubidots(UBIDOTS_TOKEN, MQTT_CLIENT);
+Ubidots* ubidots = NULL;   // dibuat di setup() setelah token dibaca
+Preferences prefs;
+WebServer portal(80);
+DNSServer dnsPortal;
 Adafruit_MLX90614 mlx;
 RTC_DS3231 rtc;
 Servo servoLengan, servoCapit;
@@ -145,6 +164,160 @@ void requestHotspot(bool manual);
 bool mlxOk = false, rtcOk = false, sdOk = false;
 bool wifiWasConnected = false, wifiPernahTersambung = false;
 unsigned long lastWifiAttemptMs = 0, lastMqttAttemptMs = 0, lastSensorMs = 0, lastPublishMs = 0, lastMlxRetryMs = 0;
+bool modeSetup = false;
+unsigned long tombolDitekanMs = 0, setupMulaiMs = 0, restartPadaMs = 0;
+
+
+
+
+
+
+
+
+
+
+
+
+
+// =====================================================================
+// DATA LOGGER: microSD /dataNN.txt + POST ke Ubidots device "logger"
+// =====================================================================
+struct LoggerJob { uint32_t id; char body[LOGGER_BODY_MAX]; };
+struct LoggerResult { uint32_t id; int code; };
+QueueHandle_t loggerJobs, loggerResults;
+
+char namaFile[16] = "";
+unsigned long dataKe = 0;
+char waktuLog[24] = "";
+unsigned long long tsLog = 0;
+float suhuLog = NAN;
+int kodeSebelumnya = 0;
+unsigned long long tsSebelumnya = 0;
+bool adaKirimanSebelumnya = false;
+bool menungguKode = false, barisTerbuka = false, gantiFile = false;
+uint32_t loggerJobId = 0;
+unsigned long lastLoggerMs = 0, lastSdRetryMs = 0, mulaiTungguMs = 0;
+
+// ---------- DEKLARASI FUNGSI (isi ada setelah loop) ----------
+void setMotor(ESP32PWM& pwm, uint8_t pinA, uint8_t pinB, int dir, uint8_t speed, bool invert);
+void driveMotors(int kiri, int kanan, float skalaKiri, float skalaKanan);
+void putarDiTempat(int kiri, int kanan);
+void applyMove(Move m);
+void stopMotors();
+void setupMotors();
+void setLengan(int deg);
+void setCapit(int deg);
+void setupServos();
+void readSensors();
+void setupSensors();
+void setupRtc();
+bool mulaiSd();
+void pilihFileBaru();
+void setupSd();
+void cekSd();
+bool tulisSd(const char* teks);
+bool ambilWaktu();
+void bacaData();
+void simpanData();
+void simpanKode(int kode);
+bool susunJson(char* out, size_t size);
+void kirimData();
+void terimaHasilLogger();
+void handleLogger();
+void setupWiFi();
+void handleWiFi();
+void tandaiAck(int idx, int v);
+void terimaGerak(int value);
+void prosesPerintah(const char* nama, const char* teks);
+void salinPayload(byte* payload, unsigned int length, char* buf, size_t size);
+bool ambilNama(const char* topic, const char* awalan, const char* akhiran, char* out, size_t size);
+void onMqttMessage(char* topic, byte* payload, unsigned int length);
+void kirimAck();
+void logHeap();
+void onMqttConnected();
+void handleMqtt();
+void publishSensors();
+int firebasePatch(const String& body);
+int loggerPost(const char* body);
+bool jalankanLogger();
+void kirimFirebase(int jenis);
+void firebaseTask(void*);
+void publishFbResult(const FbResult& r);
+void requestHotspot(bool manual);
+void handleFirebase();
+void handleFailsafe();
+void bacaKredensial();
+String tokenSamar();
+String escapeHtml(String s);
+void cekTombolSetup();
+void mulaiPortal();
+void jalankanPortal();
+void alihkanPortal();
+void kirimHalaman(String isi);
+void halamanPortal();
+void simpanPortal();
+void resetPortal();
+
+// =====================================================================
+// SETUP & LOOP
+// =====================================================================
+void setup() {
+  Serial.begin(115200);
+
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1);
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
+  setupMotors();
+  setupServos();
+
+  pinMode(PIN_TOMBOL_SETUP, INPUT_PULLUP);
+  bacaKredensial();
+  if (modeSetup) {
+    mulaiPortal();
+    return;
+  }
+
+  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+  Wire.setClock(100000);
+  setupSensors();
+  setupRtc();
+  setupSd();
+
+  setupWiFi();
+  ubidots = new Ubidots(ubidotsToken, MQTT_CLIENT);
+  ubidots->begin(onMqttMessage);
+
+  fbResults = xQueueCreate(4, sizeof(FbResult));
+  loggerJobs = xQueueCreate(1, sizeof(LoggerJob));
+  loggerResults = xQueueCreate(2, sizeof(LoggerResult));
+  xTaskCreatePinnedToCore(firebaseTask, "firebase", 12288, nullptr, 1, nullptr, 0);
+}
+
+void loop() {
+  if (modeSetup) {
+    jalankanPortal();
+    return;
+  }
+  cekTombolSetup();
+  handleWiFi();
+  handleMqtt();
+  handleFailsafe();
+  kirimAck();
+  logHeap();
+  handleFirebase();
+  handleLogger();
+
+  unsigned long now = millis();
+  if (now - lastSensorMs >= SENSOR_INTERVAL_MS) {
+    lastSensorMs = now;
+    readSensors();
+  }
+  if (now - lastPublishMs >= PUBLISH_INTERVAL_MS) {
+    lastPublishMs = now;
+    publishSensors();
+  }
+}
 
 // =====================================================================
 // MOTOR
@@ -265,25 +438,6 @@ void setupRtc() {
     Serial.println("DS3231: TIDAK ADA (dicoba lagi tiap 10 dtk)");
   }
 }
-
-// =====================================================================
-// DATA LOGGER: microSD /dataNN.txt + POST ke Ubidots device "logger"
-// =====================================================================
-struct LoggerJob { uint32_t id; char body[LOGGER_BODY_MAX]; };
-struct LoggerResult { uint32_t id; int code; };
-QueueHandle_t loggerJobs, loggerResults;
-
-char namaFile[16] = "";
-unsigned long dataKe = 0;
-char waktuLog[24] = "";
-unsigned long long tsLog = 0;
-float suhuLog = NAN;
-int kodeSebelumnya = 0;
-unsigned long long tsSebelumnya = 0;
-bool adaKirimanSebelumnya = false;
-bool menungguKode = false, barisTerbuka = false, gantiFile = false;
-uint32_t loggerJobId = 0;
-unsigned long lastLoggerMs = 0, lastSdRetryMs = 0, mulaiTungguMs = 0;
 
 bool mulaiSd() {
   sdOk = SD.begin(PIN_SD_CS, SPI, 4000000);
@@ -451,9 +605,9 @@ void setupWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);   // modem sleep mati: perintah gerak diterima tanpa jeda
   WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.begin(wifiSsid, wifiPass);
   lastWifiAttemptMs = millis();
-  Serial.printf("Menghubungkan ke hotspot \"%s\"...\n", WIFI_SSID);
+  Serial.printf("Menghubungkan ke hotspot \"%s\"...\n", wifiSsid);
 }
 
 void handleWiFi() {
@@ -476,7 +630,7 @@ void handleWiFi() {
   if (millis() - lastWifiAttemptMs > WIFI_RETRY_MS) {
     lastWifiAttemptMs = millis();
     WiFi.disconnect();
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    WiFi.begin(wifiSsid, wifiPass);
   }
 }
 
@@ -547,15 +701,15 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
 }
 
 void kirimAck() {
-  if (WiFi.status() != WL_CONNECTED || !ubidots.connected()) return;
+  if (WiFi.status() != WL_CONNECTED || !ubidots->connected()) return;
   int count = 0;
   for (int i = 0; i < ACK_JUMLAH; i++) {
     if (!acks[i].pending) continue;
-    ubidots.add(acks[i].ubiVar, acks[i].value);
+    ubidots->add(acks[i].ubiVar, acks[i].value);
     acks[i].pending = false;
     count++;
   }
-  if (count > 0) ubidots.ubidotsPublish(DEVICE_LABEL);
+  if (count > 0) ubidots->ubidotsPublish(DEVICE_LABEL);
 }
 
 void logHeap() {
@@ -567,35 +721,35 @@ void logHeap() {
 void onMqttConnected() {
   Serial.println("MQTT Ubidots terhubung");
   tandaiAck(ACK_GERAK, MOVE_STOP);
-  ubidots.add(VAR_GERAK, 0);
-  ubidots.add(VAR_KIRIM_HOTSPOT, 0);
-  ubidots.ubidotsPublish(DEVICE_LABEL);
-  ubidots.ubidotsSubscribe(DEVICE_LABEL, VAR_GERAK);
-  ubidots.ubidotsSubscribe(DEVICE_LABEL, VAR_SPEED);
-  ubidots.ubidotsSubscribe(DEVICE_LABEL, VAR_LENGAN);
-  ubidots.ubidotsSubscribe(DEVICE_LABEL, VAR_CAPIT);
-  ubidots.ubidotsSubscribe(DEVICE_LABEL, VAR_BATAS_SUHU);
-  ubidots.ubidotsSubscribe(DEVICE_LABEL, VAR_KIRIM_HOTSPOT);
+  ubidots->add(VAR_GERAK, 0);
+  ubidots->add(VAR_KIRIM_HOTSPOT, 0);
+  ubidots->ubidotsPublish(DEVICE_LABEL);
+  ubidots->ubidotsSubscribe(DEVICE_LABEL, VAR_GERAK);
+  ubidots->ubidotsSubscribe(DEVICE_LABEL, VAR_SPEED);
+  ubidots->ubidotsSubscribe(DEVICE_LABEL, VAR_LENGAN);
+  ubidots->ubidotsSubscribe(DEVICE_LABEL, VAR_CAPIT);
+  ubidots->ubidotsSubscribe(DEVICE_LABEL, VAR_BATAS_SUHU);
+  ubidots->ubidotsSubscribe(DEVICE_LABEL, VAR_KIRIM_HOTSPOT);
 }
 
 void handleMqtt() {
   if (WiFi.status() != WL_CONNECTED) return;
-  if (ubidots.connected()) {
-    ubidots.loop();
+  if (ubidots->connected()) {
+    ubidots->loop();
     return;
   }
   if (millis() - lastMqttAttemptMs < MQTT_RETRY_MS && lastMqttAttemptMs != 0) return;
   lastMqttAttemptMs = millis();
   stopMotors();
-  if (ubidots.connect()) onMqttConnected();
+  if (ubidots->connect()) onMqttConnected();
   else Serial.println("MQTT gagal, coba lagi...");
 }
 
 void publishSensors() {
-  if (WiFi.status() != WL_CONNECTED || !ubidots.connected()) return;
+  if (WiFi.status() != WL_CONNECTED || !ubidots->connected()) return;
   int count = 0;
-  if (!isnan(suhuObjek)) { ubidots.add(VAR_SUHU_OBJEK, suhuObjek); count++; }
-  if (count > 0) ubidots.ubidotsPublish(DEVICE_LABEL);
+  if (!isnan(suhuObjek)) { ubidots->add(VAR_SUHU_OBJEK, suhuObjek); count++; }
+  if (count > 0) ubidots->ubidotsPublish(DEVICE_LABEL);
 }
 
 // =====================================================================
@@ -622,7 +776,7 @@ int loggerPost(const char* body) {
   http.setTimeout(LOGGER_TIMEOUT_MS);
   if (!http.begin(client, LOGGER_URL)) return -1;
   http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-Auth-Token", UBIDOTS_TOKEN);
+  http.addHeader("X-Auth-Token", ubidotsToken);
   int code = http.POST((uint8_t*)body, strlen(body));
   http.end();
   return code;
@@ -666,12 +820,12 @@ void firebaseTask(void*) {
 }
 
 void publishFbResult(const FbResult& r) {
-  if (!ubidots.connected()) return;
-  ubidots.add(VAR_FB_CODE, r.code);
-  ubidots.add(VAR_FB_JENIS, r.jenis);
-  if (!isnan(r.suhu)) ubidots.add(VAR_FB_SUHU, r.suhu);
-  if (r.jenis == FB_HOTSPOT && r.code >= 200 && r.code < 300) ubidots.add(VAR_HOTSPOT, 1);
-  ubidots.ubidotsPublish(DEVICE_LABEL);
+  if (!ubidots->connected()) return;
+  ubidots->add(VAR_FB_CODE, r.code);
+  ubidots->add(VAR_FB_JENIS, r.jenis);
+  if (!isnan(r.suhu)) ubidots->add(VAR_FB_SUHU, r.suhu);
+  if (r.jenis == FB_HOTSPOT && r.code >= 200 && r.code < 300) ubidots->add(VAR_HOTSPOT, 1);
+  ubidots->ubidotsPublish(DEVICE_LABEL);
 }
 
 void requestHotspot(bool manual) {
@@ -719,7 +873,7 @@ void handleFirebase() {
 // =====================================================================
 void handleFailsafe() {
   if (currentMove == MOVE_STOP) return;
-  bool linkOk = WiFi.status() == WL_CONNECTED && ubidots.connected();
+  bool linkOk = WiFi.status() == WL_CONNECTED && ubidots->connected();
   if (!linkOk || millis() - lastCommandMs > FAILSAFE_TIMEOUT_MS) {
     stopMotors();
     tandaiAck(ACK_GERAK, MOVE_STOP);
@@ -729,49 +883,175 @@ void handleFailsafe() {
 }
 
 // =====================================================================
-// SETUP & LOOP
+// PORTAL Phantom-Setup (WiFi + token Ubidots, disimpan di NVS)
 // =====================================================================
-void setup() {
-  Serial.begin(115200);
+void bacaKredensial() {
+  prefs.begin(PREFS_NAMA, false);
+  String ssid = prefs.getString("ssid", "");
+  String pass = prefs.getString("pass", "");
+  String token = prefs.getString("token", "");
+  modeSetup = prefs.getBool("setup", false);
+  prefs.end();
 
-  ESP32PWM::allocateTimer(0);
-  ESP32PWM::allocateTimer(1);
-  ESP32PWM::allocateTimer(2);
-  ESP32PWM::allocateTimer(3);
-  setupMotors();
-  setupServos();
-
-  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
-  Wire.setClock(100000);
-  setupSensors();
-  setupRtc();
-  setupSd();
-
-  setupWiFi();
-  ubidots.begin(onMqttMessage);
-
-  fbResults = xQueueCreate(4, sizeof(FbResult));
-  loggerJobs = xQueueCreate(1, sizeof(LoggerJob));
-  loggerResults = xQueueCreate(2, sizeof(LoggerResult));
-  xTaskCreatePinnedToCore(firebaseTask, "firebase", 12288, nullptr, 1, nullptr, 0);
+  if (ssid.length() > 0) {
+    strlcpy(wifiSsid, ssid.c_str(), sizeof(wifiSsid));
+    strlcpy(wifiPass, pass.c_str(), sizeof(wifiPass));
+  } else {
+    strlcpy(wifiSsid, WIFI_SSID_DEFAULT, sizeof(wifiSsid));
+    strlcpy(wifiPass, WIFI_PASS_DEFAULT, sizeof(wifiPass));
+  }
+  if (token.length() > 0) {
+    strlcpy(ubidotsToken, token.c_str(), sizeof(ubidotsToken));
+    sumberToken = "tersimpan dari portal";
+  } else {
+    strlcpy(ubidotsToken, TOKEN_DEFAULT, sizeof(ubidotsToken));
+    sumberToken = "default program";
+  }
+  Serial.printf("Token Ubidots: %s (%s)\n", tokenSamar().c_str(), sumberToken);
+  Serial.println("Tahan tombol BOOT 3 detik untuk membuka portal Phantom-Setup");
 }
 
-void loop() {
-  handleWiFi();
-  handleMqtt();
-  handleFailsafe();
-  kirimAck();
-  logHeap();
-  handleFirebase();
-  handleLogger();
+String tokenSamar() {
+  String t = String(ubidotsToken);
+  if (t.length() <= 9) {
+    return "****";
+  }
+  return t.substring(0, 5) + "..." + t.substring(t.length() - 4);
+}
 
-  unsigned long now = millis();
-  if (now - lastSensorMs >= SENSOR_INTERVAL_MS) {
-    lastSensorMs = now;
-    readSensors();
+String escapeHtml(String s) {
+  s.replace("&", "&amp;");
+  s.replace("<", "&lt;");
+  s.replace(">", "&gt;");
+  s.replace("\"", "&quot;");
+  return s;
+}
+
+void cekTombolSetup() {
+  if (digitalRead(PIN_TOMBOL_SETUP) == HIGH) {
+    tombolDitekanMs = 0;
+    return;
   }
-  if (now - lastPublishMs >= PUBLISH_INTERVAL_MS) {
-    lastPublishMs = now;
-    publishSensors();
+  if (tombolDitekanMs == 0) {
+    tombolDitekanMs = millis();
+    return;
   }
+  if (millis() - tombolDitekanMs < SETUP_TAHAN_MS) {
+    return;
+  }
+  stopMotors();
+  Serial.println("Tombol BOOT ditahan: restart ke portal Phantom-Setup");
+  prefs.begin(PREFS_NAMA, false);
+  prefs.putBool("setup", true);
+  prefs.end();
+  ESP.restart();
+}
+
+void mulaiPortal() {
+  prefs.begin(PREFS_NAMA, false);
+  prefs.putBool("setup", false);
+  prefs.end();
+
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(SETUP_AP_SSID, SETUP_AP_PASS);
+  dnsPortal.start(53, "*", WiFi.softAPIP());
+  portal.on("/", HTTP_GET, halamanPortal);
+  portal.on("/simpan", HTTP_POST, simpanPortal);
+  portal.on("/default", HTTP_POST, resetPortal);
+  portal.onNotFound(alihkanPortal);
+  portal.begin();
+  setupMulaiMs = millis();
+  Serial.printf("PORTAL: sambungkan HP ke WiFi \"%s\" (password \"%s\"), buka http://%s\n",
+                SETUP_AP_SSID, SETUP_AP_PASS, WiFi.softAPIP().toString().c_str());
+}
+
+void jalankanPortal() {
+  dnsPortal.processNextRequest();
+  portal.handleClient();
+  if (restartPadaMs != 0 && millis() - restartPadaMs > SETUP_RESTART_MS) {
+    ESP.restart();
+  }
+  if (millis() - setupMulaiMs > SETUP_TIMEOUT_MS) {
+    Serial.println("PORTAL: waktu habis, restart ke mode normal");
+    ESP.restart();
+  }
+}
+
+void alihkanPortal() {
+  portal.sendHeader("Location", "http://" + WiFi.softAPIP().toString() + "/", true);
+  portal.send(302, "text/plain", "");
+}
+
+void kirimHalaman(String isi) {
+  String h;
+  h.reserve(2600);
+  h += F("<!doctype html><html lang=\"id\"><head><meta charset=\"utf-8\">");
+  h += F("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Phantom-Setup</title><style>");
+  h += F("body{font-family:sans-serif;background:#070b12;color:#e6edf7;margin:0;padding:16px}");
+  h += F("form,.box{max-width:420px;margin:0 auto 12px;background:#111a28;padding:16px;border-radius:12px}");
+  h += F("label{display:block;margin:10px 0 4px;font-size:14px}small{color:#8fa3bf}");
+  h += F("input{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #2a3a55;background:#0b1220;color:#e6edf7;font-size:16px}");
+  h += F("button{margin-top:12px;width:100%;padding:12px;border:0;border-radius:8px;background:#3b8eea;color:#fff;font-size:16px;font-weight:700}");
+  h += F(".ghost{background:transparent;border:1px solid #2a3a55;color:#e6edf7}</style></head><body>");
+  h += isi;
+  h += F("</body></html>");
+  portal.send(200, "text/html", h);
+}
+
+void halamanPortal() {
+  String isi;
+  isi.reserve(1600);
+  isi += F("<form method=\"post\" action=\"/simpan\"><h2>PHANTOM Setup</h2>");
+  isi += F("<label>Nama WiFi (SSID)</label><input name=\"ssid\" maxlength=\"32\" value=\"");
+  isi += escapeHtml(String(wifiSsid));
+  isi += F("\"><label>Password WiFi</label><input name=\"pass\" type=\"password\" maxlength=\"64\" placeholder=\"kosongkan = tetap\">");
+  isi += F("<label>Token Ubidots</label><input id=\"tok\" name=\"token\" type=\"password\" maxlength=\"79\" ");
+  isi += F("placeholder=\"kosongkan = tetap\" autocapitalize=\"off\" spellcheck=\"false\">");
+  isi += F("<button type=\"button\" class=\"ghost\" onclick=\"var t=document.getElementById('tok');");
+  isi += F("if(t.type=='password'){t.type='text'}else{t.type='password'}\">Tampilkan / sembunyikan token</button>");
+  isi += "<p><small>Token sekarang: " + tokenSamar() + " (" + sumberToken + ")</small></p>";
+  isi += F("<button>Simpan &amp; restart</button></form>");
+  isi += F("<form method=\"post\" action=\"/default\"><small>Hapus WiFi &amp; token tersimpan, kembali ke isi secrets.h.</small>");
+  isi += F("<button class=\"ghost\">Pakai default program</button></form>");
+  kirimHalaman(isi);
+}
+
+void simpanPortal() {
+  String ssid = portal.arg("ssid");
+  String pass = portal.arg("pass");
+  String token = portal.arg("token");
+  ssid.trim();
+  token.trim();
+  if (ssid.length() > 32 || pass.length() > 64 || token.length() >= sizeof(ubidotsToken)) {
+    kirimHalaman(F("<div class=\"box\"><h2>Isian terlalu panjang</h2><a href=\"/\">Kembali</a></div>"));
+    return;
+  }
+  prefs.begin(PREFS_NAMA, false);
+  if (ssid.length() > 0) {
+    if (pass.length() > 0 || ssid != String(wifiSsid)) {
+      prefs.putString("pass", pass);
+    } else {
+      prefs.putString("pass", String(wifiPass));
+    }
+    prefs.putString("ssid", ssid);
+  }
+  if (token.length() > 0) {
+    prefs.putString("token", token);
+  }
+  prefs.end();
+  Serial.println("PORTAL: tersimpan, restart...");
+  kirimHalaman(F("<div class=\"box\"><h2>Tersimpan</h2><p>Robot restart dan tersambung ke WiFi baru.</p></div>"));
+  restartPadaMs = millis();
+}
+
+void resetPortal() {
+  prefs.begin(PREFS_NAMA, false);
+  prefs.remove("ssid");
+  prefs.remove("pass");
+  prefs.remove("token");
+  prefs.end();
+  Serial.println("PORTAL: kembali ke default program, restart...");
+  kirimHalaman(F("<div class=\"box\"><h2>Default dipakai</h2><p>Robot restart memakai isi secrets.h.</p></div>"));
+  restartPadaMs = millis();
 }

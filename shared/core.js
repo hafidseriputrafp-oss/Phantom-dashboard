@@ -1,9 +1,8 @@
 /*
- * Kode bersama Beranda (/) dan builder (/dash/): token, tema, API Ubidots dengan antrean
+ * Kode bersama Beranda (/) dan builder (/dash/): tema, API Ubidots (token dari shared/token.js) dengan antrean
  * request (STEM = 1 request/detik), dan sinkron konfigurasi dashboard ke Ubidots.
  */
 const API_BASE = "https://industrial.api.ubidots.com/api";
-const KEY_TOKEN = "phantom.token";
 const KEY_SETTINGS = "phantom.settings";
 const KEY_HUB = "phantom.hub";
 const CONFIG_DEVICE = "dashboard-config";
@@ -156,9 +155,7 @@ function downloadFile(name, content, type) {
 
 /* ---------- Token & tema (dipakai bersama dashboard robot) ---------- */
 
-const getToken = () => store.get(KEY_TOKEN, "");
-const setToken = (t) => store.set(KEY_TOKEN, t);
-const clearToken = () => store.remove(KEY_TOKEN);
+const getToken = () => PhantomToken.get();
 
 function loadLook() {
   const s = store.get(KEY_SETTINGS, {});
@@ -218,7 +215,7 @@ class ApiError extends Error {
 }
 
 function kindFromStatus(status) {
-  if (status === 401 || status === 403) return "auth";
+  if (PhantomToken.isAuthStatus(status)) return "auth";
   if (status === 404) return "notfound";
   if (status === 429) return "ratelimit";
   if (status >= 500) return "server";
@@ -232,8 +229,8 @@ function rateLimitText() {
 
 function errorText(e) {
   switch (e && e.kind) {
-    case "auth": return "Token Ubidots ditolak. Periksa token di Pengaturan.";
-    case "notfound": return `Device "${e.device || "?"}" belum ada di Ubidots.`;
+    case "auth": return PhantomToken.PESAN.expired;
+    case "notfound": return "Belum ada data";
     case "ratelimit": return rateLimitText();
     case "offline": return "Perangkat ini sedang offline. Periksa koneksi internet.";
     case "timeout": return "Ubidots tidak merespons (timeout).";
@@ -309,7 +306,10 @@ async function api(method, path, body, token = getToken()) {
     limiter.rateLimited(Number(res.headers.get("Retry-After")));
     throw new ApiError("ratelimit", 429);
   }
-  if (!res.ok) throw new ApiError(kindFromStatus(res.status), res.status);
+  if (!res.ok) {
+    if (PhantomToken.isAuthStatus(res.status) && token === getToken()) PhantomToken.expire();
+    throw new ApiError(kindFromStatus(res.status), res.status);
+  }
   limiter.ok();
   const text = await res.text();
   return text ? JSON.parse(text) : null;
@@ -623,48 +623,6 @@ function safeUrl(raw) {
   if (!s) return "";
   if (/^https?:\/\//i.test(s)) return s;
   return `https://${s}`;
-}
-
-/* ---------- Login bersama ---------- */
-
-async function verifyToken(token) {
-  try {
-    await readDevice(CONFIG_DEVICE, PRIORITY.sync, token);
-  } catch (e) {
-    if (e.kind === "auth") throw e;
-  }
-}
-
-function bindLogin(onDone) {
-  const form = $("#login-form");
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const token = $("#login-token").value.trim();
-    const err = $("#login-error");
-    const submit = $("#login-submit");
-    err.hidden = true;
-    submit.disabled = true;
-    submit.textContent = "Memeriksa token…";
-    try {
-      await verifyToken(token);
-      setToken(token);
-      onDone();
-    } catch (ex) {
-      err.textContent = errorText(ex);
-      err.hidden = false;
-    } finally {
-      submit.disabled = false;
-      submit.textContent = "Masuk";
-    }
-  });
-  document.querySelectorAll("[data-reveal]").forEach((b) => {
-    b.addEventListener("click", () => {
-      const field = document.getElementById(b.dataset.reveal);
-      const show = field.type === "password";
-      field.type = show ? "text" : "password";
-      b.textContent = show ? "Sembunyi" : "Lihat";
-    });
-  });
 }
 
 function startClock() {

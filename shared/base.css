@@ -182,6 +182,29 @@ input:focus-visible, button:focus-visible, select:focus-visible { outline: 2px s
 .login { min-height: 100vh; display: grid; place-items: center; padding: var(--gutter); }
 .login-card { width: 100%; max-width: 440px; display: flex; flex-direction: column; gap: 12px; }
 
+.login-title { margin: 0; font-size: 1.3rem; line-height: 1.2; color: var(--text); }
+.login-note { margin: 0; font-size: 0.85rem; }
+.login-card .field { margin: 0; }
+.login-card .error { margin: 0; }
+
+@media (max-height: 430px) {
+  .login { padding: 8px 16px; align-items: center; }
+  .login-card { gap: 6px; padding: 10px 16px; }
+  .login-card .logo-lg svg { width: 30px; height: 30px; }
+  .login-card .logo-lg strong { font-size: 1.2rem; }
+  .login-card .logo span { display: none; }
+  .login-title { font-size: 1.05rem; }
+  .login-note { font-size: 0.78rem; }
+  .login-card .btn.big { min-height: 44px; }
+}
+
+@media (max-height: 320px) {
+  .login { padding: 4px 16px; }
+  .login-card { gap: 4px; padding: 6px 14px; }
+  .login-card .btn.big { min-height: 40px; }
+  .login-note { font-size: 0.72rem; }
+}
+
 /* ---------- Header ---------- */
 
 .logo { display: flex; align-items: center; gap: 10px; color: var(--accent); min-width: 0; }

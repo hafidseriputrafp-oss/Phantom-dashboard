@@ -10,28 +10,27 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Rajdhani:wght@500;600;700&display=swap">
-  <link rel="stylesheet" href="style.css?v=20261132">
+  <link rel="stylesheet" href="style.css?v=20261133">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js" defer></script>
-  <script src="app.js?v=20261132" defer></script>
+  <script src="../shared/token.js?v=20261133" defer></script>
+  <script src="app.js?v=20261133" defer></script>
 </head>
 <body>
 
   <section id="login" class="login" hidden>
-    <form id="login-form" class="card login-card" autocomplete="off">
+    <form id="login-form" class="card login-card" autocomplete="off" novalidate>
       <div class="logo">
         <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M24 3 6 10v13c0 11 7.6 19.4 18 22 10.4-2.6 18-11 18-22V10L24 3Z" fill="none" stroke="currentColor" stroke-width="3"/><path d="M14 25h7l3-7 4 13 3-6h3" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <div><strong>PHANTOM</strong><span>GARUDA Operation · Kontrol Robot</span></div>
       </div>
+      <h1 class="login-title">Masukkan Token Ubidots</h1>
+      <p class="muted login-note">Token hanya disimpan di browser ini dan dipakai bersama Beranda, Robot, dan Data Logger.</p>
       <label class="field">
         <span>Token Ubidots</span>
         <div class="with-btn">
-          <input id="login-token" type="password" required placeholder="BBUS-xxxxxxxx" spellcheck="false" autocapitalize="off">
-          <button type="button" class="btn ghost" data-reveal="login-token">Lihat</button>
+          <input id="login-token" type="password" placeholder="BBUS-xxxxxxxx" spellcheck="false" autocapitalize="off" autocomplete="off">
+          <button type="button" class="btn ghost" id="login-reveal" aria-controls="login-token">Tampilkan</button>
         </div>
-      </label>
-      <label class="field">
-        <span>Device label</span>
-        <input id="login-device" type="text" required spellcheck="false" autocapitalize="off">
       </label>
       <p id="login-error" class="error" role="alert" hidden></p>
       <button type="submit" class="btn primary big" id="login-submit">Masuk</button>
@@ -53,6 +52,7 @@
       <div id="banner" class="banner" role="status" hidden></div>
       <span id="clock" class="clock">--:--:--</span>
       <button type="button" class="icon-btn" id="btn-full" aria-label="Layar penuh" title="Layar penuh">⛶</button>
+      <button type="button" class="icon-btn token-btn" data-token-change aria-label="Ganti token" title="Ganti token">🔑<span class="lbl">Ganti token</span></button>
       <button type="button" class="icon-btn" id="btn-settings" aria-label="Pengaturan" title="Pengaturan">⚙</button>
     </header>
 
@@ -169,20 +169,11 @@
           </div>
         </fieldset>
       </div>
-      <label class="field">
-        <span>Token Ubidots</span>
-        <div class="with-btn">
-          <input id="set-token" type="password" spellcheck="false" autocapitalize="off">
-          <button type="button" class="btn ghost" data-reveal="set-token">Lihat</button>
-        </div>
-      </label>
       <p id="settings-error" class="error" role="alert" hidden></p>
       <div class="dialog-actions">
         <button type="submit" value="save" class="btn primary">Simpan</button>
         <button type="submit" value="cancel" class="btn ghost" formnovalidate>Batal</button>
       </div>
-      <hr>
-      <button type="button" id="logout" class="btn danger wide">Logout &amp; hapus token</button>
     </form>
   </dialog>
 
