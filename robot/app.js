@@ -23,15 +23,15 @@ const THEMES = [
 ];
 
 const DEFAULT_SETTINGS = {
-  v: 7,
+  v: 8,
   device: "phantom",
   pollInterval: 3,
   theme: "garuda",
   mode: "dark",
   batas: 50,
   mqtt: true,
-  lengan: { naik: 0, bawa: 60, turun: 180, min: 0, max: 180 },
-  capit: { buka: 25, tutup: 110, min: 25, max: 110 },
+  lengan: { min: 0, max: 180, naik: 0, bawa: 60, turun: 180 },
+  capit: { min: 25, max: 110, buka: 25, tutup: 110 },
 };
 
 const ROBOT_VARS = ["suhu_objek", "fb_code", "hotspot"];
@@ -86,19 +86,31 @@ function num(v, fallback) {
   return n;
 }
 
-const SERVO_LIMITS = { lengan: { min: 0, max: 180 }, capit: { min: 25, max: 110 } };
-const VALUE_LIMITS = { speed: { min: 0, max: 255 }, ...SERVO_LIMITS };
+const ANGLE_MIN = 0;
+const ANGLE_MAX = 180;
+const SPEED_RANGE = { min: 0, max: 255 };
+const SERVO_PRESETS = { lengan: ["naik", "bawa", "turun"], capit: ["buka", "tutup"] };
+const SERVO_NAMES = { lengan: "Lengan", capit: "Capit" };
+
+function validasiServo(servo, v) {
+  const nama = SERVO_NAMES[servo];
+  for (const key of Object.keys(DEFAULT_SETTINGS[servo])) {
+    const x = v[key];
+    if (!Number.isInteger(x) || x < ANGLE_MIN || x > ANGLE_MAX) return `${nama}: ${key.toUpperCase()} harus angka bulat ${ANGLE_MIN}–${ANGLE_MAX}.`;
+  }
+  if (v.min >= v.max) return `${nama}: MIN (${v.min}) harus lebih kecil dari MAX (${v.max}).`;
+  for (const key of SERVO_PRESETS[servo]) {
+    if (v[key] < v.min || v[key] > v.max) return `${nama}: ${key.toUpperCase()} (${v[key]}) harus di antara MIN ${v.min} dan MAX ${v.max}.`;
+  }
+  return "";
+}
 
 function migrateServo(servo, saved, oldVersion) {
-  const lim = SERVO_LIMITS[servo];
   const def = DEFAULT_SETTINGS[servo];
+  if (oldVersion < 8 || !saved) return { ...def };
   const out = {};
-  for (const key of Object.keys(def)) {
-    const v = Number(saved && saved[key]);
-    const batasLama = oldVersion < 7 && servo === "lengan" && (key === "turun" || key === "max") && v === 150;
-    const usang = oldVersion < 6 || batasLama || !saved || !Number.isFinite(v) || v < lim.min || v > lim.max;
-    out[key] = usang ? def[key] : v;
-  }
+  for (const key of Object.keys(def)) out[key] = Number(saved[key]);
+  if (validasiServo(servo, out)) return { ...def };
   return out;
 }
 
@@ -882,10 +894,9 @@ function bindPad() {
 const VALUE_VARS = ["speed", "lengan", "capit"];
 
 function valueRange(variable) {
-  const hw = VALUE_LIMITS[variable];
   const s = state.settings[variable];
-  if (!s) return hw;
-  return { min: Math.max(hw.min, Math.min(s.min, s.max)), max: Math.min(hw.max, Math.max(s.min, s.max)) };
+  if (!s) return SPEED_RANGE;
+  return { min: s.min, max: s.max };
 }
 
 function showValue(variable) {
@@ -1291,10 +1302,59 @@ function saveSettings() {
   store.set(KEY_SETTINGS, state.settings);
 }
 
-const ANGLE_FIELDS = [
-  ["lengan", "naik"], ["lengan", "bawa"], ["lengan", "turun"], ["lengan", "min"], ["lengan", "max"],
-  ["capit", "buka"], ["capit", "tutup"], ["capit", "min"], ["capit", "max"],
-];
+function bacaFormServo() {
+  const form = $("#settings-form");
+  const out = {};
+  for (const servo of Object.keys(SERVO_PRESETS)) {
+    out[servo] = {};
+    for (const key of Object.keys(DEFAULT_SETTINGS[servo])) {
+      const t = form.elements[`${servo}-${key}`].value.trim();
+      out[servo][key] = t === "" ? NaN : Number(t);
+    }
+  }
+  return out;
+}
+
+function isiFormServo(values) {
+  const form = $("#settings-form");
+  for (const servo of Object.keys(SERVO_PRESETS)) {
+    for (const key of Object.keys(DEFAULT_SETTINGS[servo])) form.elements[`${servo}-${key}`].value = values[servo][key];
+  }
+}
+
+function pesanServo(text, ok) {
+  const msg = $("#servo-msg");
+  msg.textContent = text;
+  msg.hidden = !text;
+  msg.classList.toggle("ok", Boolean(ok));
+}
+
+function cekFormServo() {
+  const vals = bacaFormServo();
+  for (const servo of Object.keys(SERVO_PRESETS)) {
+    const err = validasiServo(servo, vals[servo]);
+    if (err) return { err, vals };
+  }
+  return { err: "", vals };
+}
+
+function simpanServo(teksOk) {
+  const { err, vals } = cekFormServo();
+  if (err) {
+    pesanServo(`${err} Belum disimpan.`, false);
+    return false;
+  }
+  state.settings = { ...state.settings, lengan: vals.lengan, capit: vals.capit };
+  saveSettings();
+  applyValueLimits();
+  pesanServo(teksOk || "Batas servo disimpan.", true);
+  return true;
+}
+
+function resetServo() {
+  isiFormServo({ lengan: DEFAULT_SETTINGS.lengan, capit: DEFAULT_SETTINGS.capit });
+  simpanServo("Dikembalikan ke default dan disimpan.");
+}
 
 function openSettings() {
   const form = $("#settings-form");
@@ -1303,7 +1363,8 @@ function openSettings() {
   $("#set-interval").value = s.pollInterval;
   $("#set-batas").value = s.batas;
   $("#set-mqtt").checked = s.mqtt;
-  for (const [servo, key] of ANGLE_FIELDS) form.elements[`${servo}-${key}`].value = s[servo][key];
+  isiFormServo(s);
+  pesanServo("", false);
   $("#set-token").value = state.token;
   $("#set-token").type = "password";
   form.elements.theme.value = s.theme;
@@ -1331,9 +1392,10 @@ function applySettings() {
     lengan: { ...s.lengan },
     capit: { ...s.capit },
   };
-  for (const [servo, key] of ANGLE_FIELDS) {
-    const lim = SERVO_LIMITS[servo];
-    next[servo][key] = Math.min(lim.max, Math.max(lim.min, Math.round(num(form.elements[`${servo}-${key}`].value, s[servo][key]))));
+  const servo = cekFormServo();
+  if (!servo.err) {
+    next.lengan = servo.vals.lengan;
+    next.capit = servo.vals.capit;
   }
   state.settings = next;
   saveSettings();
@@ -1459,6 +1521,16 @@ function bindEvents() {
   bindValues();
 
   const form = $("#settings-form");
+  form.addEventListener("submit", (e) => {
+    if (!e.submitter || e.submitter.value !== "save") return;
+    const { err } = cekFormServo();
+    if (!err) return;
+    e.preventDefault();
+    pesanServo(`${err} Belum disimpan.`, false);
+    $("#servo-msg").scrollIntoView({ block: "nearest" });
+  });
+  $("#servo-save").addEventListener("click", () => simpanServo());
+  $("#servo-reset").addEventListener("click", resetServo);
   form.addEventListener("change", (e) => {
     if (e.target.name === "theme" || e.target.name === "mode") applyTheme(form.elements.theme.value, form.elements.mode.value);
   });
