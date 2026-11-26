@@ -23,14 +23,14 @@ const THEMES = [
 ];
 
 const DEFAULT_SETTINGS = {
-  v: 6,
+  v: 7,
   device: "phantom",
   pollInterval: 3,
   theme: "garuda",
   mode: "dark",
   batas: 50,
   mqtt: true,
-  lengan: { naik: 0, bawa: 60, turun: 150, min: 0, max: 150 },
+  lengan: { naik: 0, bawa: 60, turun: 180, min: 0, max: 180 },
   capit: { buka: 25, tutup: 110, min: 25, max: 110 },
 };
 
@@ -86,7 +86,7 @@ function num(v, fallback) {
   return n;
 }
 
-const SERVO_LIMITS = { lengan: { min: 0, max: 150 }, capit: { min: 25, max: 110 } };
+const SERVO_LIMITS = { lengan: { min: 0, max: 180 }, capit: { min: 25, max: 110 } };
 const VALUE_LIMITS = { speed: { min: 0, max: 255 }, ...SERVO_LIMITS };
 
 function migrateServo(servo, saved, oldVersion) {
@@ -95,7 +95,8 @@ function migrateServo(servo, saved, oldVersion) {
   const out = {};
   for (const key of Object.keys(def)) {
     const v = Number(saved && saved[key]);
-    const usang = oldVersion < 6 || !saved || !Number.isFinite(v) || v < lim.min || v > lim.max;
+    const batasLama = oldVersion < 7 && servo === "lengan" && (key === "turun" || key === "max") && v === 150;
+    const usang = oldVersion < 6 || batasLama || !saved || !Number.isFinite(v) || v < lim.min || v > lim.max;
     out[key] = usang ? def[key] : v;
   }
   return out;
