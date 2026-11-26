@@ -38,7 +38,11 @@ const REQUEST_GAP_MS = 1100;
 const REQUEST_TIMEOUT_MS = 8000;
 const BACKOFF_START_MS = 2000;
 const BACKOFF_MAX_MS = 60000;
-const HOLD_HEARTBEAT_MS = 1500;
+const HOLD_HEARTBEAT_MS = 5000;
+const GERAK_ULANG_MS = 2000;
+const GERAK_ULANG_MAKS = 2;
+const STOP_ULANG_MS = 1500;
+const STOP_ULANG_MAKS = 4;
 const RELEASE_SETTLE_MS = 120;
 const TAP_MIN_MS = 250;
 const STOP_PARALLEL_MS = 600;
@@ -569,7 +573,7 @@ async function flush(variable, q) {
 
 /* ---------- Kanal gerak: langsung kirim, berurutan, ketukan tidak hilang ---------- */
 
-const gerak = { queue: [], sent: 0, busy: false, sentAt: 0, dirAt: 0, confirmTimer: null, parallelTimer: null };
+const gerak = { queue: [], sent: 0, busy: false, sentAt: 0, dirAt: 0, confirmTimer: null, parallelTimer: null, retryTimer: null, retries: 0 };
 
 async function deliverGerak(v) {
   const t0 = performance.now();
@@ -623,6 +627,7 @@ async function pumpGerak() {
       try {
         const r = await deliverGerak(v);
         ackServer("gerak", "gerak", v, r);
+        jadwalCekGerak(v, r.via);
         if (state.bannerKind === "ratelimit") setBanner("");
         break;
       } catch (e) {
@@ -648,13 +653,32 @@ function gerakHeartbeat() {
   pumpGerak();
 }
 
+function jadwalCekGerak(v, via) {
+  clearTimeout(gerak.retryTimer);
+  if (via !== "mqtt") return;
+  let jeda = GERAK_ULANG_MS;
+  if (!v) jeda = STOP_ULANG_MS;
+  gerak.retryTimer = setTimeout(() => cekGerak(v), jeda);
+}
+
+function cekGerak(v) {
+  if (gerak.sent !== v || gerak.busy || gerak.queue.length) return;
+  if (robotState.gerak === v || state.drive.dir !== v) return;
+  let maks = GERAK_ULANG_MAKS;
+  if (!v) maks = STOP_ULANG_MAKS;
+  if (gerak.retries >= maks) return;
+  gerak.retries++;
+  gerak.queue.push(v);
+  pumpGerak();
+}
+
 function clearStopGuards() {
   clearTimeout(gerak.parallelTimer);
   clearTimeout(gerak.confirmTimer);
 }
 
 function confirmStop() {
-  if (state.drive.dir) return;
+  if (state.drive.dir || robotState.gerak === 0) return;
   if (gerak.busy || gerak.queue.length) {
     gerak.confirmTimer = setTimeout(confirmStop, 300);
     return;
@@ -671,7 +695,7 @@ function parallelStop() {
 
 /* ---------- Status perintah: dikirim → sampai server → terlaksana robot ---------- */
 
-const ACK_TIMEOUT_MS = 3000;
+const ACK_TIMEOUT_MS = 5000;
 const ACK_VARS = { gerak: "ack_gerak", lengan: "ack_lengan", capit: "ack_capit" };
 const ACK_NAMES = { 0: "STOP", 1: "MAJU", 2: "MUNDUR", 3: "KIRI", 4: "KANAN", 5: "MAJU-KIRI", 6: "MAJU-KANAN", 7: "MUNDUR-KIRI", 8: "MUNDUR-KANAN" };
 const acks = { gerak: { sel: "#ack-gerak", cycle: null, timer: null }, servo: { sel: "#ack-servo", cycle: null, timer: null } };
@@ -798,6 +822,7 @@ function applyDrive() {
   showDrive(dir);
   if (state.drive.dir === dir) return;
   state.drive = { dir };
+  gerak.retries = 0;
   ackBegin("gerak", "gerak", dir);
   if (!dir) {
     stopNow();
@@ -846,6 +871,7 @@ function emergencyStop() {
   clearTimeout(state.releaseTimer);
   state.inputs.clear();
   state.drive = { dir: 0 };
+  gerak.retries = 0;
   showDrive(0);
   vibrate([60, 40, 60]);
   const btn = $("#estop");

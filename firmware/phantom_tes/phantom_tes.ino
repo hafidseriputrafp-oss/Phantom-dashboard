@@ -65,8 +65,11 @@ const bool DEBUG_HEAP = true;
 const unsigned long HEAP_LOG_MS = 10000;
 const unsigned long PUBLISH_INTERVAL_MS = 5000;   // kirim suhu ke Ubidots
 const unsigned long SENSOR_INTERVAL_MS  = 1000;   // baca sensor & log microSD
-const unsigned long HEARTBEAT_MS        = 1500;   // dashboard kirim ulang "gerak" tiap 1,5 dtk saat ditahan
-const unsigned long FAILSAFE_TIMEOUT_MS = HEARTBEAT_MS + 1500;   // toleransi antrean request + jaringan
+const unsigned long HEARTBEAT_MS        = 5000;   // dashboard kirim ulang "gerak" tiap 5 dtk hanya saat tombol ditahan lama
+const unsigned long FAILSAFE_TIMEOUT_MS = HEARTBEAT_MS + 3000;   // HP putus saat tombol ditahan -> robot berhenti
+const unsigned long PUBLISH_JEDA_MS     = 1000;   // robot publish ke Ubidots maks. 1x per detik
+const int           MAKS_NILAI          = 5;      // batas nilai per publish library UbidotsESPMQTT
+const unsigned long SUB_ULANG_MS        = 10000;  // subscribe ulang sampai pesan pertama diterima
 const unsigned long MQTT_RETRY_MS       = 3000;
 const unsigned long WIFI_RETRY_MS       = 30000;
 const unsigned long SETUP_TAHAN_MS      = 3000;     // lama tahan tombol BOOT
@@ -125,6 +128,12 @@ Ack acks[ACK_JUMLAH] = {
   { false, 0, VAR_ACK_LENGAN },
   { false, 0, VAR_ACK_CAPIT },
 };
+char* SUB_VARS[] = { VAR_GERAK, VAR_SPEED, VAR_LENGAN, VAR_CAPIT };
+const int SUB_JUMLAH = sizeof(SUB_VARS) / sizeof(SUB_VARS[0]);
+bool subDapat[SUB_JUMLAH];
+bool mqttWasConnected = false, suhuTunggu = false;
+int mqttPutusCount = 0;
+unsigned long lastSubMs = 0, lastUbiPublishMs = 0;
 unsigned long lastHeapLogMs = 0;
 float suhuObjek = NAN;
 
@@ -159,7 +168,11 @@ void prosesPerintah(const char* nama, const char* teks);
 void salinPayload(byte* payload, unsigned int length, char* buf, size_t size);
 bool ambilNama(const char* topic, const char* awalan, const char* akhiran, char* out, size_t size);
 void onMqttMessage(char* topic, byte* payload, unsigned int length);
-void kirimAck();
+void kirimUbidots();
+void langgananSemua();
+void langgananUlang();
+void tandaiDiterima(const char* nama);
+void catatPutus();
 void logHeap();
 void onMqttConnected();
 void handleMqtt();
@@ -217,7 +230,7 @@ void loop() {
   handleWiFi();
   handleMqtt();
   handleFailsafe();
-  kirimAck();
+  kirimUbidots();
   logHeap();
   handleTimeSync();
 
@@ -480,6 +493,7 @@ void prosesPerintah(const char* nama, const char* teks) {
     setCapit(value);
     tandaiAck(ACK_CAPIT, capitDeg);
   }
+  tandaiDiterima(nama);
   Serial.printf("RX %s = %d\n", nama, value);
 }
 
@@ -509,8 +523,9 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   prosesPerintah(nama, teks);
 }
 
-void kirimAck() {
+void kirimUbidots() {
   if (WiFi.status() != WL_CONNECTED || !ubidots->connected()) return;
+  if (millis() - lastUbiPublishMs < PUBLISH_JEDA_MS) return;
   int count = 0;
   for (int i = 0; i < ACK_JUMLAH; i++) {
     if (!acks[i].pending) continue;
@@ -518,7 +533,17 @@ void kirimAck() {
     acks[i].pending = false;
     count++;
   }
-  if (count > 0) ubidots->ubidotsPublish(DEVICE_LABEL);
+  if (suhuTunggu && count < MAKS_NILAI) {
+    if (!isnan(suhuObjek)) {
+      ubidots->add(VAR_SUHU_OBJEK, suhuObjek);
+      count++;
+    }
+    suhuTunggu = false;
+  }
+  if (count > 0) {
+    ubidots->ubidotsPublish(DEVICE_LABEL);
+    lastUbiPublishMs = millis();
+  }
 }
 
 void logHeap() {
@@ -532,18 +557,22 @@ void onMqttConnected() {
   tandaiAck(ACK_GERAK, MOVE_STOP);
   ubidots->add(VAR_GERAK, 0);
   ubidots->ubidotsPublish(DEVICE_LABEL);
-  ubidots->ubidotsSubscribe(DEVICE_LABEL, VAR_GERAK);
-  ubidots->ubidotsSubscribe(DEVICE_LABEL, VAR_SPEED);
-  ubidots->ubidotsSubscribe(DEVICE_LABEL, VAR_LENGAN);
-  ubidots->ubidotsSubscribe(DEVICE_LABEL, VAR_CAPIT);
+  lastUbiPublishMs = millis();
+  mqttWasConnected = true;
+  langgananSemua();
 }
 
 void handleMqtt() {
-  if (WiFi.status() != WL_CONNECTED) return;
-  if (ubidots->connected()) {
-    ubidots->loop();
+  if (WiFi.status() != WL_CONNECTED) {
+    catatPutus();
     return;
   }
+  if (ubidots->connected()) {
+    ubidots->loop();
+    langgananUlang();
+    return;
+  }
+  catatPutus();
   if (millis() - lastMqttAttemptMs < MQTT_RETRY_MS && lastMqttAttemptMs != 0) return;
   lastMqttAttemptMs = millis();
   stopMotors();
@@ -552,10 +581,49 @@ void handleMqtt() {
 }
 
 void publishSensors() {
-  if (WiFi.status() != WL_CONNECTED || !ubidots->connected()) return;
-  int count = 0;
-  if (!isnan(suhuObjek))   { ubidots->add(VAR_SUHU_OBJEK, suhuObjek); count++; }
-  if (count > 0) ubidots->ubidotsPublish(DEVICE_LABEL);
+  suhuTunggu = true;
+}
+
+// =====================================================================
+// SUBSCRIBE ULANG & ANTREAN PUBLISH (maks. 1 kiriman per detik)
+// =====================================================================
+void langgananSemua() {
+  for (int i = 0; i < SUB_JUMLAH; i++) {
+    subDapat[i] = false;
+    ubidots->ubidotsSubscribe(DEVICE_LABEL, SUB_VARS[i]);
+  }
+  lastSubMs = millis();
+}
+
+void langgananUlang() {
+  if (millis() - lastSubMs < SUB_ULANG_MS) {
+    return;
+  }
+  lastSubMs = millis();
+  for (int i = 0; i < SUB_JUMLAH; i++) {
+    if (subDapat[i]) {
+      continue;
+    }
+    ubidots->ubidotsSubscribe(DEVICE_LABEL, SUB_VARS[i]);
+    Serial.printf("Subscribe ulang %s (belum ada pesan)\n", SUB_VARS[i]);
+  }
+}
+
+void tandaiDiterima(const char* nama) {
+  for (int i = 0; i < SUB_JUMLAH; i++) {
+    if (strcmp(nama, SUB_VARS[i]) == 0) {
+      subDapat[i] = true;
+    }
+  }
+}
+
+void catatPutus() {
+  if (!mqttWasConnected) {
+    return;
+  }
+  mqttWasConnected = false;
+  mqttPutusCount++;
+  Serial.printf("MQTT terputus (ke-%d), motor berhenti, sambung ulang...\n", mqttPutusCount);
 }
 
 // =====================================================================
@@ -567,7 +635,7 @@ void handleFailsafe() {
   if (!linkOk || millis() - lastCommandMs > FAILSAFE_TIMEOUT_MS) {
     stopMotors();
     tandaiAck(ACK_GERAK, MOVE_STOP);
-    if (linkOk) Serial.printf("FAILSAFE: tidak ada heartbeat > %lu ms\n", FAILSAFE_TIMEOUT_MS);
+    if (linkOk) Serial.printf("FAILSAFE: tidak ada perintah gerak > %lu ms\n", FAILSAFE_TIMEOUT_MS);
     else Serial.println("FAILSAFE: koneksi terputus");
   }
 }
