@@ -10,10 +10,10 @@
 #include <Wire.h>
 #include <SPI.h>
 #include <SD.h>
-#include <time.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <ArduinoJson.h>
 #include <UbidotsESPMQTT.h>
 #include <ESP32Servo.h>
 #include <Adafruit_MLX90614.h>
@@ -49,7 +49,9 @@ char VAR_SPEED[]        = "speed";
 char VAR_LENGAN[]       = "lengan";
 char VAR_CAPIT[]        = "capit";
 char VAR_SUHU_OBJEK[]   = "suhu_objek";
-char VAR_SUHU_AMBIENT[] = "suhu_ambient";
+char VAR_ACK_GERAK[]    = "ack_gerak";
+char VAR_ACK_LENGAN[]   = "ack_lengan";
+char VAR_ACK_CAPIT[]    = "ack_capit";
 char VAR_BATAS_SUHU[]   = "batas_suhu";
 char VAR_KIRIM_HOTSPOT[] = "kirim_hotspot";
 char VAR_HOTSPOT[]      = "hotspot";
@@ -58,14 +60,22 @@ char VAR_FB_JENIS[]     = "fb_jenis";
 char VAR_FB_SUHU[]      = "fb_suhu";
 
 // ---------- PARAMETER ----------
+const bool DEBUG_HEAP = true;
+const unsigned long HEAP_LOG_MS = 10000;
 const unsigned long PUBLISH_INTERVAL_MS = 5000;   // kirim suhu ke Ubidots
-const unsigned long SENSOR_INTERVAL_MS  = 1000;   // baca sensor & log microSD
+const unsigned long SENSOR_INTERVAL_MS  = 1000;   // baca MLX90614
 const unsigned long HEARTBEAT_MS        = 1500;   // dashboard kirim ulang "gerak" tiap 1,5 dtk saat ditahan
 const unsigned long FAILSAFE_TIMEOUT_MS = HEARTBEAT_MS + 1500;   // toleransi antrean request + jaringan
 const unsigned long MQTT_RETRY_MS       = 3000;
-const unsigned long WIFI_RETRY_MS       = 10000;
-const long          GMT_OFFSET_S        = 7 * 3600;   // WIB
-const char*         LOG_FILE            = "/phantom_lomba.csv";
+const unsigned long WIFI_RETRY_MS       = 30000;
+const long          WIB_OFFSET_S        = 7 * 3600;
+
+const unsigned long LOGGER_INTERVAL_MS   = 10000;
+const unsigned long LOGGER_TUNGGU_MAX_MS = 30000;
+const unsigned long SD_RETRY_MS          = 30000;
+const uint16_t      LOGGER_TIMEOUT_MS    = 5000;
+const char*         LOGGER_URL           = "https://industrial.api.ubidots.com/api/v1.6/devices/logger";
+const size_t        LOGGER_BODY_MAX      = 384;
 
 const unsigned long FIREBASE_DATA_MS    = 5000;   // kirim {"suhu":..,"wifi":true} ke web dosen
 const unsigned long HOTSPOT_RETRY_MS    = 5000;   // jeda coba ulang hotspot bila gagal
@@ -76,12 +86,14 @@ const int           FB_DITOLAK          = -3;     // kode untuk dashboard: suhu 
 const uint32_t MOTOR_PWM_FREQ    = 1000;
 const uint8_t  MOTOR_PWM_BITS    = 8;
 const bool     MOTOR_KIRI_BALIK  = false;   // ubah jika arah roda kiri terbalik
-const bool     MOTOR_KANAN_BALIK = false;
+const bool     MOTOR_KANAN_BALIK = true;
 const uint8_t  SPEED_DEFAULT     = 150;
 const float    CURVE_RATIO       = 0.4;     // kecepatan roda sisi dalam saat belok melengkung
+const uint8_t  TURN_SPEED        = 255;     // putar di tempat: roda saling menahan, perlu PWM penuh
 
-const int SERVO_MIN_DEG = 0, SERVO_MAX_DEG = 180;
-const int LENGAN_AWAL = 135, CAPIT_AWAL = 90;   // PARKIR & TUTUP di dashboard
+const int LENGAN_MIN = 0, LENGAN_MAX = 150;    // MG996R terbalik: 0 = naik mentok, 150 = turun maksimal
+const int CAPIT_MIN = 25, CAPIT_MAX = 110;     // 25 = buka, 110 = tutup
+const int LENGAN_AWAL = 0, CAPIT_AWAL = 110;
 const int SERVO_MIN_US = 500, SERVO_MAX_US = 2400;
 
 // ---------- OBJEK ----------
@@ -91,7 +103,8 @@ enum Move {
 };
 const char* MOVE_NAMES[] = { "STOP", "MAJU", "MUNDUR", "PUTAR KIRI", "PUTAR KANAN", "MAJU-KIRI", "MAJU-KANAN", "MUNDUR-KIRI", "MUNDUR-KANAN" };
 
-Ubidots ubidots(UBIDOTS_TOKEN);
+char MQTT_CLIENT[] = "garuda13-phantom";
+Ubidots ubidots(UBIDOTS_TOKEN, MQTT_CLIENT);
 Adafruit_MLX90614 mlx;
 RTC_DS3231 rtc;
 Servo servoLengan, servoCapit;
@@ -102,7 +115,20 @@ Move currentMove = MOVE_STOP;
 uint8_t currentSpeed = SPEED_DEFAULT;
 int lenganDeg = LENGAN_AWAL, capitDeg = CAPIT_AWAL;
 unsigned long lastCommandMs = 0;
-float suhuObjek = NAN, suhuAmbient = NAN;
+int lastCmdGerak = MOVE_STOP;
+struct Ack {
+  bool pending;
+  int value;
+  char* ubiVar;
+};
+enum { ACK_GERAK = 0, ACK_LENGAN = 1, ACK_CAPIT = 2, ACK_JUMLAH = 3 };
+Ack acks[ACK_JUMLAH] = {
+  { false, 0, VAR_ACK_GERAK },
+  { false, 0, VAR_ACK_LENGAN },
+  { false, 0, VAR_ACK_CAPIT },
+};
+unsigned long lastHeapLogMs = 0;
+float suhuObjek = NAN;
 float batasSuhu = BATAS_SUHU_DEFAULT;
 int lastFbCode = 0;
 bool hotspotSent = false;
@@ -117,7 +143,7 @@ QueueHandle_t fbResults;
 void requestHotspot(bool manual);
 
 bool mlxOk = false, rtcOk = false, sdOk = false;
-bool wifiWasConnected = false, timeSynced = false, ntpStarted = false;
+bool wifiWasConnected = false, wifiPernahTersambung = false;
 unsigned long lastWifiAttemptMs = 0, lastMqttAttemptMs = 0, lastSensorMs = 0, lastPublishMs = 0, lastMlxRetryMs = 0;
 
 // =====================================================================
@@ -147,13 +173,18 @@ void driveMotors(int kiri, int kanan, float skalaKiri, float skalaKanan) {
   setMotor(pwmKanan, PIN_MOTOR_IN3, PIN_MOTOR_IN4, kanan, (uint8_t)(currentSpeed * skalaKanan), MOTOR_KANAN_BALIK);
 }
 
+void putarDiTempat(int kiri, int kanan) {
+  setMotor(pwmKiri, PIN_MOTOR_IN1, PIN_MOTOR_IN2, kiri, TURN_SPEED, MOTOR_KIRI_BALIK);
+  setMotor(pwmKanan, PIN_MOTOR_IN3, PIN_MOTOR_IN4, kanan, TURN_SPEED, MOTOR_KANAN_BALIK);
+}
+
 void applyMove(Move m) {
   currentMove = m;
   switch (m) {
     case MOVE_MAJU:          driveMotors(1, 1, 1.0, 1.0);   break;
     case MOVE_MUNDUR:        driveMotors(-1, -1, 1.0, 1.0); break;
-    case MOVE_KIRI:          driveMotors(-1, 1, 1.0, 1.0);  break;
-    case MOVE_KANAN:         driveMotors(1, -1, 1.0, 1.0);  break;
+    case MOVE_KIRI:          putarDiTempat(-1, 1);          break;
+    case MOVE_KANAN:         putarDiTempat(1, -1);          break;
     case MOVE_MAJU_KIRI:     driveMotors(1, 1, CURVE_RATIO, 1.0);   break;
     case MOVE_MAJU_KANAN:    driveMotors(1, 1, 1.0, CURVE_RATIO);   break;
     case MOVE_MUNDUR_KIRI:   driveMotors(-1, -1, CURVE_RATIO, 1.0); break;
@@ -181,12 +212,12 @@ void setupMotors() {
 // SERVO
 // =====================================================================
 void setLengan(int deg) {
-  lenganDeg = constrain(deg, SERVO_MIN_DEG, SERVO_MAX_DEG);
+  lenganDeg = constrain(deg, LENGAN_MIN, LENGAN_MAX);
   servoLengan.write(lenganDeg);
 }
 
 void setCapit(int deg) {
-  capitDeg = constrain(deg, SERVO_MIN_DEG, SERVO_MAX_DEG);
+  capitDeg = constrain(deg, CAPIT_MIN, CAPIT_MAX);
   servoCapit.write(capitDeg);
 }
 
@@ -209,10 +240,8 @@ void readSensors() {
   }
   if (mlxOk) {
     suhuObjek = mlx.readObjectTempC();
-    suhuAmbient = mlx.readAmbientTempC();
   } else {
     suhuObjek = NAN;
-    suhuAmbient = NAN;
   }
 }
 
@@ -226,75 +255,192 @@ void setupSensors() {
 }
 
 // =====================================================================
-// RTC & WAKTU
+// RTC DS3231 (dibaca apa adanya, tanpa NTP)
 // =====================================================================
 void setupRtc() {
   rtcOk = rtc.begin(&Wire);
-  if (rtcOk && rtc.lostPower()) rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   if (rtcOk) {
     Serial.println("DS3231: OK");
   } else {
-    Serial.println("DS3231: TIDAK ADA");
-  }
-}
-
-void handleTimeSync() {
-  if (timeSynced || WiFi.status() != WL_CONNECTED) return;
-  if (!ntpStarted) {
-    configTime(0, 0, "pool.ntp.org", "time.google.com");
-    ntpStarted = true;
-    return;
-  }
-  time_t now = time(nullptr);
-  if (now < 1700000000) return;
-  timeSynced = true;
-  if (rtcOk) rtc.adjust(DateTime((uint32_t)(now + GMT_OFFSET_S)));
-  Serial.println("Waktu tersinkron NTP");
-}
-
-void formatTimestamp(char* buf, size_t len) {
-  if (rtcOk) {
-    DateTime n = rtc.now();
-    snprintf(buf, len, "%04d-%02d-%02d %02d:%02d:%02d", n.year(), n.month(), n.day(), n.hour(), n.minute(), n.second());
-  } else {
-    snprintf(buf, len, "boot+%lus", millis() / 1000);
+    Serial.println("DS3231: TIDAK ADA (dicoba lagi tiap 10 dtk)");
   }
 }
 
 // =====================================================================
-// MICROSD LOG
+// DATA LOGGER: microSD /dataNN.txt + POST ke Ubidots device "logger"
 // =====================================================================
-void setupSd() {
-  SPI.begin(PIN_SD_SCK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
+struct LoggerJob { uint32_t id; char body[LOGGER_BODY_MAX]; };
+struct LoggerResult { uint32_t id; int code; };
+QueueHandle_t loggerJobs, loggerResults;
+
+char namaFile[16] = "";
+unsigned long dataKe = 0;
+char waktuLog[24] = "";
+unsigned long long tsLog = 0;
+float suhuLog = NAN;
+int kodeSebelumnya = 0;
+unsigned long long tsSebelumnya = 0;
+bool adaKirimanSebelumnya = false;
+bool menungguKode = false, barisTerbuka = false, gantiFile = false;
+uint32_t loggerJobId = 0;
+unsigned long lastLoggerMs = 0, lastSdRetryMs = 0, mulaiTungguMs = 0;
+
+bool mulaiSd() {
   sdOk = SD.begin(PIN_SD_CS, SPI, 4000000);
-  if (sdOk && !SD.exists(LOG_FILE)) {
-    File f = SD.open(LOG_FILE, FILE_WRITE);
-    if (f) {
-      f.println("waktu,suhu_objek,suhu_ambient,gerak,speed,lengan,capit,fb_code");
-      f.close();
-    } else {
-      sdOk = false;
+  return sdOk;
+}
+
+void pilihFileBaru() {
+  if (!sdOk) return;
+  char nama[16];
+  for (int i = 1; i <= 99; i++) {
+    snprintf(nama, sizeof(nama), "/data%02d.txt", i);
+    if (!SD.exists(nama) || i == 99) {
+      strlcpy(namaFile, nama, sizeof(namaFile));
+      break;
     }
   }
-  if (sdOk) {
+  dataKe = 0;
+  Serial.printf("Logger: file %s\n", namaFile);
+}
+
+void setupSd() {
+  SPI.begin(PIN_SD_SCK, PIN_SD_MISO, PIN_SD_MOSI, PIN_SD_CS);
+  lastSdRetryMs = millis();
+  if (mulaiSd()) {
     Serial.println("microSD: OK");
+    pilihFileBaru();
   } else {
-    Serial.println("microSD: TIDAK ADA (lanjut tanpa log)");
+    Serial.println("microSD: TIDAK ADA (dicoba lagi tiap 30 dtk)");
   }
 }
 
-void logToSd() {
-  if (!sdOk) return;
-  File f = SD.open(LOG_FILE, FILE_APPEND);
+void cekSd() {
+  if (sdOk || millis() - lastSdRetryMs < SD_RETRY_MS) return;
+  lastSdRetryMs = millis();
+  SD.end();
+  if (mulaiSd()) {
+    Serial.println("microSD: tersambung lagi");
+    pilihFileBaru();
+  }
+}
+
+bool tulisSd(const char* teks) {
+  if (!sdOk || namaFile[0] == '\0') return false;
+  File f = SD.open(namaFile, FILE_APPEND);
   if (!f) {
     sdOk = false;
-    Serial.println("microSD gagal ditulis, log dihentikan");
+    Serial.println("microSD gagal ditulis, dicoba lagi nanti");
+    return false;
+  }
+  f.print(teks);
+  f.close();
+  return true;
+}
+
+bool ambilWaktu() {
+  if (!rtcOk) rtcOk = rtc.begin(&Wire);
+  if (!rtcOk) return false;
+  DateTime now = rtc.now();
+  String s = now.timestamp(DateTime::TIMESTAMP_FULL);
+  s.replace("T", " ");
+  strlcpy(waktuLog, s.c_str(), sizeof(waktuLog));
+  tsLog = ((unsigned long long)now.unixtime() - WIB_OFFSET_S) * 1000ULL;
+  return true;
+}
+
+void bacaData() {
+  suhuLog = suhuObjek;
+}
+
+void simpanData() {
+  char baris[48];
+  snprintf(baris, sizeof(baris), "%s, %.2f, ", waktuLog, suhuLog);
+  barisTerbuka = tulisSd(baris);
+}
+
+void simpanKode(int kode) {
+  if (barisTerbuka) {
+    char teks[16];
+    snprintf(teks, sizeof(teks), "%d\n", kode);
+    tulisSd(teks);
+  }
+  barisTerbuka = false;
+  menungguKode = false;
+  kodeSebelumnya = kode;
+  tsSebelumnya = tsLog;
+  adaKirimanSebelumnya = true;
+  Serial.printf("Logger %s data ke-%lu: %s, %.2f -> %d\n", namaFile, dataKe, waktuLog, suhuLog, kode);
+}
+
+bool susunJson(char* out, size_t size) {
+  JsonDocument doc;
+  JsonObject so = doc["suhu_objek"].to<JsonObject>();
+  so["value"] = serialized(String(suhuLog, 2));
+  so["timestamp"] = tsLog;
+  so["context"]["waktu"] = waktuLog;
+  JsonObject dk = doc["data_ke"].to<JsonObject>();
+  dk["value"] = dataKe;
+  dk["timestamp"] = tsLog;
+  if (adaKirimanSebelumnya) {
+    JsonObject hc = doc["http_code"].to<JsonObject>();
+    hc["value"] = kodeSebelumnya;
+    hc["timestamp"] = tsSebelumnya;
+  }
+  size_t n = serializeJson(doc, out, size);
+  return n > 0 && n < size - 1;
+}
+
+void kirimData() {
+  if (WiFi.status() != WL_CONNECTED) {
+    simpanKode(-1);
     return;
   }
-  char ts[24];
-  formatTimestamp(ts, sizeof(ts));
-  f.printf("%s,%.2f,%.2f,%d,%d,%d,%d,%d\n", ts, suhuObjek, suhuAmbient, (int)currentMove, currentSpeed, lenganDeg, capitDeg, lastFbCode);
-  f.close();
+  if (isnan(suhuLog)) {
+    simpanKode(0);
+    return;
+  }
+  LoggerJob job;
+  job.id = ++loggerJobId;
+  if (!susunJson(job.body, sizeof(job.body)) || xQueueSend(loggerJobs, &job, 0) != pdTRUE) {
+    simpanKode(-1);
+    return;
+  }
+  menungguKode = true;
+  mulaiTungguMs = millis();
+}
+
+void terimaHasilLogger() {
+  LoggerResult r;
+  while (xQueueReceive(loggerResults, &r, 0) == pdTRUE) {
+    if (menungguKode && r.id == loggerJobId) simpanKode(r.code);
+  }
+  if (!menungguKode) return;
+  LoggerJob batal;
+  if (WiFi.status() != WL_CONNECTED && xQueueReceive(loggerJobs, &batal, 0) == pdTRUE) {
+    simpanKode(-1);
+  } else if (millis() - mulaiTungguMs > LOGGER_TUNGGU_MAX_MS) {
+    simpanKode(-1);
+  }
+}
+
+void handleLogger() {
+  cekSd();
+  terimaHasilLogger();
+  if (menungguKode || millis() - lastLoggerMs < LOGGER_INTERVAL_MS) return;
+  lastLoggerMs = millis();
+  if (gantiFile) {
+    gantiFile = false;
+    if (dataKe > 0) pilihFileBaru();
+  }
+  if (!ambilWaktu()) {
+    Serial.println("Logger: RTC tidak terbaca, dicoba lagi");
+    return;
+  }
+  bacaData();
+  dataKe++;
+  simpanData();
+  kirimData();
 }
 
 // =====================================================================
@@ -316,6 +462,8 @@ void handleWiFi() {
       Serial.print("WiFi terhubung, IP: ");
       Serial.println(WiFi.localIP());
       lastMqttAttemptMs = 0;
+      if (wifiPernahTersambung && dataKe > 0) gantiFile = true;
+      wifiPernahTersambung = true;
     }
     wifiWasConnected = true;
     return;
@@ -335,49 +483,90 @@ void handleWiFi() {
 // =====================================================================
 // UBIDOTS MQTT
 // =====================================================================
-bool topicIs(const char* topic, const char* variable) {
-  char suffix[40];
-  snprintf(suffix, sizeof(suffix), "/%s/lv", variable);
-  return strstr(topic, suffix) != nullptr;
+void tandaiAck(int idx, int v) {
+  acks[idx].value = v;
+  acks[idx].pending = true;
+}
+
+void terimaGerak(int value) {
+  lastCommandMs = millis();
+  Move m = MOVE_STOP;
+  if (value >= MOVE_STOP && value <= MOVE_MUNDUR_KANAN) m = (Move)value;
+  bool berubah = m != currentMove || m != lastCmdGerak;
+  lastCmdGerak = m;
+  applyMove(m);
+  if (berubah) tandaiAck(ACK_GERAK, currentMove);
+}
+
+void prosesPerintah(const char* nama, const char* teks) {
+  int value = (int)lroundf(atof(teks));
+  if (strcmp(nama, VAR_GERAK) == 0) {
+    terimaGerak(value);
+  } else if (strcmp(nama, VAR_SPEED) == 0) {
+    currentSpeed = constrain(value, 0, 255);
+    applyMove(currentMove);
+  } else if (strcmp(nama, VAR_LENGAN) == 0) {
+    setLengan(value);
+    tandaiAck(ACK_LENGAN, lenganDeg);
+  } else if (strcmp(nama, VAR_CAPIT) == 0) {
+    setCapit(value);
+    tandaiAck(ACK_CAPIT, capitDeg);
+  } else if (strcmp(nama, VAR_BATAS_SUHU) == 0) {
+    float b = atof(teks);
+    if (b > 0) batasSuhu = b;
+  } else if (strcmp(nama, VAR_KIRIM_HOTSPOT) == 0) {
+    if (value == 1) requestHotspot(true);
+  }
+  Serial.printf("RX %s = %d\n", nama, value);
+}
+
+void salinPayload(byte* payload, unsigned int length, char* buf, size_t size) {
+  unsigned int n = length;
+  if (n > size - 1) n = size - 1;
+  memcpy(buf, payload, n);
+  buf[n] = '\0';
+}
+
+bool ambilNama(const char* topic, const char* awalan, const char* akhiran, char* out, size_t size) {
+  size_t la = strlen(awalan), lt = strlen(topic), lk = strlen(akhiran);
+  if (strncmp(topic, awalan, la) != 0 || lt < la + lk) return false;
+  if (lk > 0 && strcmp(topic + lt - lk, akhiran) != 0) return false;
+  size_t n = lt - la - lk;
+  if (n == 0 || n >= size) return false;
+  memcpy(out, topic + la, n);
+  out[n] = '\0';
+  return true;
 }
 
 void onMqttMessage(char* topic, byte* payload, unsigned int length) {
-  char buf[16];
-  unsigned int n;
-  if (length < sizeof(buf) - 1) {
-    n = length;
-  } else {
-    n = sizeof(buf) - 1;
-  }
-  memcpy(buf, payload, n);
-  buf[n] = '\0';
-  int value = (int)lroundf(atof(buf));
+  char awalan[40], nama[24], teks[16];
+  snprintf(awalan, sizeof(awalan), "/v1.6/devices/%s/", DEVICE_LABEL);
+  if (!ambilNama(topic, awalan, "/lv", nama, sizeof(nama))) return;
+  salinPayload(payload, length, teks, sizeof(teks));
+  prosesPerintah(nama, teks);
+}
 
-  if (topicIs(topic, VAR_GERAK)) {
-    lastCommandMs = millis();
-    if (value >= MOVE_STOP && value <= MOVE_MUNDUR_KANAN) {
-      applyMove((Move)value);
-    } else {
-      applyMove(MOVE_STOP);
-    }
-  } else if (topicIs(topic, VAR_SPEED)) {
-    currentSpeed = constrain(value, 0, 255);
-    applyMove(currentMove);
-  } else if (topicIs(topic, VAR_LENGAN)) {
-    setLengan(value);
-  } else if (topicIs(topic, VAR_CAPIT)) {
-    setCapit(value);
-  } else if (topicIs(topic, VAR_BATAS_SUHU)) {
-    float b = atof(buf);
-    if (b > 0) batasSuhu = b;
-  } else if (topicIs(topic, VAR_KIRIM_HOTSPOT)) {
-    if (value == 1) requestHotspot(true);
+void kirimAck() {
+  if (WiFi.status() != WL_CONNECTED || !ubidots.connected()) return;
+  int count = 0;
+  for (int i = 0; i < ACK_JUMLAH; i++) {
+    if (!acks[i].pending) continue;
+    ubidots.add(acks[i].ubiVar, acks[i].value);
+    acks[i].pending = false;
+    count++;
   }
-  Serial.printf("RX %s = %d\n", topic, value);
+  if (count > 0) ubidots.ubidotsPublish(DEVICE_LABEL);
+}
+
+void logHeap() {
+  if (!DEBUG_HEAP || millis() - lastHeapLogMs < HEAP_LOG_MS) return;
+  lastHeapLogMs = millis();
+  Serial.printf("Heap bebas %lu B (minimum %lu B)\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap());
 }
 
 void onMqttConnected() {
   Serial.println("MQTT Ubidots terhubung");
+  tandaiAck(ACK_GERAK, MOVE_STOP);
   ubidots.add(VAR_GERAK, 0);
   ubidots.add(VAR_KIRIM_HOTSPOT, 0);
   ubidots.ubidotsPublish(DEVICE_LABEL);
@@ -405,8 +594,7 @@ void handleMqtt() {
 void publishSensors() {
   if (WiFi.status() != WL_CONNECTED || !ubidots.connected()) return;
   int count = 0;
-  if (!isnan(suhuObjek))   { ubidots.add(VAR_SUHU_OBJEK, suhuObjek); count++; }
-  if (!isnan(suhuAmbient)) { ubidots.add(VAR_SUHU_AMBIENT, suhuAmbient); count++; }
+  if (!isnan(suhuObjek)) { ubidots.add(VAR_SUHU_OBJEK, suhuObjek); count++; }
   if (count > 0) ubidots.ubidotsPublish(DEVICE_LABEL);
 }
 
@@ -426,23 +614,52 @@ int firebasePatch(const String& body) {
   return code;
 }
 
+int loggerPost(const char* body) {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setConnectTimeout(LOGGER_TIMEOUT_MS);
+  http.setTimeout(LOGGER_TIMEOUT_MS);
+  if (!http.begin(client, LOGGER_URL)) return -1;
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Auth-Token", UBIDOTS_TOKEN);
+  int code = http.POST((uint8_t*)body, strlen(body));
+  http.end();
+  return code;
+}
+
+bool jalankanLogger() {
+  LoggerJob job;
+  if (xQueueReceive(loggerJobs, &job, 0) != pdTRUE) return false;
+  LoggerResult r = { job.id, loggerPost(job.body) };
+  xQueueSend(loggerResults, &r, 0);
+  return true;
+}
+
+void kirimFirebase(int jenis) {
+  FbResult r;
+  String body;
+  if (jenis == FB_HOTSPOT) {
+    wantHotspot = false;
+    body = "{\"hotspot\":true}";
+  } else {
+    wantData = false;
+    body = String("{\"suhu\":") + String(pendingSuhu, 1) + ",\"wifi\":true}";
+  }
+  r.jenis = jenis;
+  r.suhu = pendingSuhu;
+  r.code = firebasePatch(body);
+  xQueueSend(fbResults, &r, 0);
+}
+
 void firebaseTask(void*) {
   for (;;) {
-    if (WiFi.status() == WL_CONNECTED && (wantHotspot || wantData)) {
-      FbResult r;
-      String body;
+    if (WiFi.status() == WL_CONNECTED) {
       if (wantHotspot) {
-        wantHotspot = false;
-        r.jenis = FB_HOTSPOT;
-        body = "{\"hotspot\":true}";
-      } else {
-        wantData = false;
-        r.jenis = FB_DATA;
-        body = String("{\"suhu\":") + String(pendingSuhu, 1) + ",\"wifi\":true}";
+        kirimFirebase(FB_HOTSPOT);
+      } else if (!jalankanLogger() && wantData) {
+        kirimFirebase(FB_DATA);
       }
-      r.suhu = pendingSuhu;
-      r.code = firebasePatch(body);
-      xQueueSend(fbResults, &r, 0);
     }
     vTaskDelay(pdMS_TO_TICKS(50));
   }
@@ -505,6 +722,7 @@ void handleFailsafe() {
   bool linkOk = WiFi.status() == WL_CONNECTED && ubidots.connected();
   if (!linkOk || millis() - lastCommandMs > FAILSAFE_TIMEOUT_MS) {
     stopMotors();
+    tandaiAck(ACK_GERAK, MOVE_STOP);
     if (linkOk) Serial.printf("FAILSAFE: tidak ada heartbeat > %lu ms\n", FAILSAFE_TIMEOUT_MS);
     else Serial.println("FAILSAFE: koneksi terputus");
   }
@@ -533,6 +751,8 @@ void setup() {
   ubidots.begin(onMqttMessage);
 
   fbResults = xQueueCreate(4, sizeof(FbResult));
+  loggerJobs = xQueueCreate(1, sizeof(LoggerJob));
+  loggerResults = xQueueCreate(2, sizeof(LoggerResult));
   xTaskCreatePinnedToCore(firebaseTask, "firebase", 12288, nullptr, 1, nullptr, 0);
 }
 
@@ -540,14 +760,15 @@ void loop() {
   handleWiFi();
   handleMqtt();
   handleFailsafe();
-  handleTimeSync();
+  kirimAck();
+  logHeap();
   handleFirebase();
+  handleLogger();
 
   unsigned long now = millis();
   if (now - lastSensorMs >= SENSOR_INTERVAL_MS) {
     lastSensorMs = now;
     readSensors();
-    logToSd();
   }
   if (now - lastPublishMs >= PUBLISH_INTERVAL_MS) {
     lastPublishMs = now;

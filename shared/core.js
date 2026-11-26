@@ -36,12 +36,19 @@ const DEFAULT_CODE_MAP = {
 
 const LOGGER_WIDGETS = [
   { id: "w-status", type: "status", title: "Status logger", size: "S", device: "logger", variable: "", onlineS: 30 },
-  { id: "w-suhu", type: "number", title: "Suhu ambient", size: "S", device: "logger", variable: "suhu_ambient", unit: "°C", decimals: 1, icon: "🌡️", color: "#3987e5", contextKey: "waktu" },
   { id: "w-data", type: "number", title: "Data ke-", size: "S", device: "logger", variable: "data_ke", unit: "", decimals: 0, icon: "🔢", color: "#9085e9" },
   { id: "w-http", type: "code", title: "HTTP code", size: "S", device: "logger", variable: "http_code", map: DEFAULT_CODE_MAP },
-  { id: "w-chart", type: "chart", title: "Grafik suhu ambient", size: "L", device: "logger", series: [{ variable: "suhu_ambient", color: "#d95926" }], points: 50 },
-  { id: "w-table", type: "table", title: "Riwayat suhu ambient", size: "L", device: "logger", variable: "suhu_ambient", rows: 20, contextKey: "waktu" },
+  { id: "w-chart", type: "chart", title: "Grafik suhu objek", size: "L", device: "logger", series: [{ variable: "suhu_objek", color: "#d95926" }], points: 50 },
 ];
+
+const OLD_LOGGER_SIGNATURE = [
+  "w-status|status|Status logger|",
+  "w-suhu|number|Suhu ambient|suhu_ambient",
+  "w-data|number|Data ke-|data_ke",
+  "w-http|code|HTTP code|http_code",
+  "w-chart|chart|Grafik suhu ambient|suhu_ambient",
+  "w-table|table|Riwayat suhu ambient|suhu_ambient",
+].join("\n");
 
 const BUILTIN_DASHBOARDS = [
   { id: "robot", builtin: true, kind: "link", url: "robot/", name: "Robot Phantom", icon: "🤖", device: "phantom", onlineS: 15, order: 1 },
@@ -398,10 +405,27 @@ function bindCloudPill(node) {
   render();
 }
 
+function widgetSignature(widgets) {
+  return widgets.map((w) => {
+    const vars = w.variable || (w.series || []).map((x) => x.variable).join(",");
+    return [w.id, w.type, w.title, vars].join("|");
+  }).join("\n");
+}
+
+function migrateLoggerPreset() {
+  const e = entry("logger");
+  if (!e || !e.cfg || !e.cfg.builtin || !Array.isArray(e.cfg.widgets)) return false;
+  if (widgetSignature(e.cfg.widgets) !== OLD_LOGGER_SIGNATURE) return false;
+  const device = e.cfg.device || "logger";
+  saveDashboard({ ...e.cfg, widgets: clone(LOGGER_WIDGETS).map((w) => ({ ...w, device })) }, false);
+  return true;
+}
+
 function ensureBuiltins() {
   for (const b of BUILTIN_DASHBOARDS) {
     if (!entry(b.id)) hub.data.dashboards[b.id] = { cfg: clone(b), version: 0, cloud: 0, dirty: false };
   }
+  migrateLoggerPreset();
   hubSave();
 }
 
@@ -569,6 +593,10 @@ async function syncCloud(onlyId) {
     } catch (err) {
       failed = err;
     }
+  }
+  if (migrateLoggerPreset()) {
+    changed = true;
+    if (!(await pushDashboard("logger"))) failed = hub.error;
   }
   if (failed) setCloud("error", failed);
   else setCloud("saved");

@@ -86,19 +86,18 @@ Format JSON export sama dengan yang disimpan di cloud; satu dashboard berbentuk
 
 ## 5. Preset "Data Logger" (device `logger`)
 
-ESP32 data logger mengirim ke device **`logger`**:
+ESP32 data logger (program `phantom_lomba`, lihat bagian 11) mengirim ke device **`logger`**:
 
 | Variabel | Isi |
 |----------|-----|
-| `suhu_ambient` | suhu (°C), dot dengan **timestamp RTC** dan context `{"waktu":"YYYY-MM-DD HH:MM:SS"}` |
-| `data_ke` | nomor urut data |
+| `suhu_objek` | suhu objek MLX90614 (°C), dot dengan **timestamp RTC** dan context `{"waktu":"YYYY-MM-DD HH:MM:SS"}` |
+| `data_ke` | nomor urut data di file microSD saat ini |
 | `http_code` | kode HTTP kiriman sebelumnya (200, -1, 401, 429, …) |
 
-Widget bawaan: Status online (30 dtk), Kartu `suhu_ambient` (°C) + waktu RTC dari context,
-Kartu `data_ke`, Indikator `http_code`, Grafik `suhu_ambient` 50 titik, dan Tabel riwayat
-`suhu_ambient` 20 baris. Di tabel, kolom **Selisih** = waktu diterima server − timestamp RTC,
-berguna untuk melihat keterlambatan kiriman atau RTC yang meleset. **Reset ke preset** (Mode Edit)
-mengembalikan widget bawaan.
+Widget bawaan: Status online (30 dtk), Kartu `data_ke`, Indikator `http_code`, dan Grafik
+`suhu_objek` 50 titik. **Reset ke preset** (Mode Edit) mengembalikan widget bawaan. Dashboard
+Data Logger yang tersimpan dengan preset lama (suhu ambient) otomatis diganti ke preset ini.
+Kalau sudah diubah sendiri, dashboard itu tidak disentuh; pakai **Reset ke preset**.
 
 ## 6. Batas request Ubidots STEM (1 request/detik)
 
@@ -127,8 +126,11 @@ mengembalikan widget bawaan.
 | `fb_code`       | robot → dashboard  | Kode HTTP kiriman terakhir ke web dosen (200 = berhasil)         |
 | `fb_jenis`      | robot → dashboard  | Jenis kiriman terakhir: 1 = data suhu + wifi, 2 = hotspot        |
 | `fb_suhu`       | robot → dashboard  | Suhu yang ikut dikirim ke web dosen                              |
+| `ack_gerak`     | robot → dashboard  | Balasan: kode gerak yang benar-benar dijalankan (hanya saat berubah) |
+| `ack_lengan`    | robot → dashboard  | Balasan: sudut lengan setelah dibatasi robot                     |
+| `ack_capit`     | robot → dashboard  | Balasan: sudut capit setelah dibatasi robot                      |
 | `gerak`         | dashboard → robot  | 0 stop, 1 maju, 2 mundur, 3 putar kiri, 4 putar kanan, 5 maju-kiri, 6 maju-kanan, 7 mundur-kiri, 8 mundur-kanan |
-| `speed`         | dashboard → robot  | PWM 80–255                                                       |
+| `speed`         | dashboard → robot  | PWM 0–255 (maju/mundur/lengkung; putar di tempat selalu 255)     |
 | `lengan`        | dashboard → robot  | Sudut servo lengan (derajat)                                     |
 | `capit`         | dashboard → robot  | Sudut servo capit (derajat)                                      |
 | `batas_suhu`    | dashboard → robot  | Batas suhu hotspot (°C), diatur di ⚙ Pengaturan                  |
@@ -158,10 +160,10 @@ menyala sebagai pengingat. Tekan **⛶** agar semua bagian (termasuk grafik) tam
 
 Dibuat untuk **dua ibu jari**:
 
-- **Kiri (ibu jari kiri):** slider **SPEED** (PWM 80–255) dan teks arah di atas; tombol besar
+- **Kiri (ibu jari kiri):** kotak angka **SPEED** (PWM 0–255) dan teks arah di atas; tombol besar
   **▲ MAJU** dan **▼ MUNDUR** di pojok kiri bawah.
-- **Kanan (ibu jari kanan):** **LENGAN** (TURUN / BAWA / PARKIR + slider) dan **CAPIT** (BUKA / TUTUP +
-  slider) di atas; tombol besar **◀ KIRI** dan **▶ KANAN** di pojok kanan bawah.
+- **Kanan (ibu jari kanan):** **LENGAN** (NAIK / BAWA / TURUN + kotak angka) dan **CAPIT** (BUKA / TUTUP +
+  kotak angka) di atas; tombol besar **◀ KIRI** dan **▶ KANAN** di pojok kanan bawah.
 - Tahan tombol supaya robot bergerak, lepas untuk berhenti (`gerak=0`, dikirim seketika).
   **Ketuk sekali** = robot bergerak sebentar (minimal 0,25 detik) lalu berhenti, jadi bisa dipakai
   untuk menggeser posisi sedikit demi sedikit. Kombinasi dua ibu jari:
@@ -184,10 +186,27 @@ Dibuat untuk **dua ibu jari**:
 Tombol STOP dan preset servo langsung bereaksi saat disentuh, jadi tetap jalan walaupun ibu jari
 lain sedang menahan tombol gerak.
 
+**Kotak angka (SPEED, LENGAN, CAPIT).** Slider sudah diganti, karena di robot asli slider tidak mau
+berubah/terkirim.
+
+1. Ketuk kotaknya. Keyboard angka muncul.
+2. Ketik nilai, lalu tekan **KIRIM** atau **Enter**.
+
+| Kotak | Batas |
+|-------|-------|
+| SPEED | 0–255 |
+| LENGAN | 0–150 |
+| CAPIT | 25–110 |
+
+- Nilai di luar batas otomatis dipotong ke batas terdekat, dan muncul teks kecil merah
+  **"dibatasi ke X"**. Contoh: LENGAN 200 → dikirim 150.
+- Angka di sebelah nama (mis. `LENGAN 60°`) adalah nilai aktif terakhir yang dikirim.
+- Tombol preset NAIK/BAWA/TURUN dan BUKA/TUTUP langsung mengirim sudutnya.
+
 **Pengaturan (⚙):** device label, interval baca data (default 3 detik), batas hotspot (default
 50 °C, ikut dikirim ke robot sebagai `batas_suhu`), **Jalur cepat MQTT** (default aktif), sudut
-tombol TURUN/BAWA/PARKIR/BUKA/TUTUP dan batas min/max slider, tema warna, mode Gelap/Terang, token,
-dan logout. Semua tersimpan di `localStorage` browser itu.
+tombol NAIK/BAWA/TURUN/BUKA/TUTUP dan batas min/max kotak angka (tidak bisa diisi di luar batas servo),
+tema warna, mode Gelap/Terang, token, dan logout. Semua tersimpan di `localStorage` browser itu.
 
 ### Kecepatan respons perintah
 
@@ -207,10 +226,26 @@ Supaya terasa secepat mungkin:
   paralel (ketukan yang belum sempat terkirim dibuang), lalu sekali lagi setelah perintah sebelumnya
   selesai, jadi robot pasti berhenti. **STOP DARURAT** selalu dikirim seketika dan diulang sekali.
 
+### Status perintah: apakah robot benar-benar menjalankan?
+
+Di bawah teks arah (kolom kiri) dan di atas tombol ◀ ▶ (untuk lengan/capit) ada baris status:
+
+| Status | Arti |
+|--------|------|
+| `⏳ MAJU dikirim…` | tombol baru ditekan |
+| `📡 MAJU sampai di server` | broker Ubidots sudah menerima (PUBACK MQTT / REST 200) |
+| `✅ MAJU terlaksana (420 ms)` | robot membalas lewat `ack_gerak`; angka = waktu dari tombol ditekan sampai balasan masuk |
+| `❌ Robot tidak membalas` | 3 detik tanpa balasan (robot mati, WiFi robot putus, atau firmware lama) |
+
+Untuk servo: `✅ CAPIT 110° terlaksana (…)`. Kalau robot membatasi sudut, yang tampil adalah sudut
+hasil robot. Menahan tombol (heartbeat) tidak mengulang status. Kalau robot berhenti sendiri karena
+failsafe saat tombol masih ditahan, muncul `⚠ Robot berhenti sendiri (failsafe)`. Balasan robot hanya
+bisa diterima lewat jalur MQTT. Saat dashboard memakai REST, status berhenti di 📡.
+
 ### Batas request Ubidots di dashboard robot
 
 - Semua variabel device dibaca dengan **1 request** (`GET /api/v2.0/devices/~phantom/variables/`).
-- Request baca/servo lewat antrean dengan jarak minimal 1,1 detik; nilai slider digabung (hanya nilai
+- Request baca/servo lewat antrean dengan jarak minimal 1,1 detik; nilai servo/speed digabung (hanya nilai
   terakhir yang dikirim). Lewat MQTT, servo dan gerak tidak memakai kuota REST.
 - Saat memakai REST, polling dijeda selama menyetir sampai 1,5 detik setelah berhenti. `gerak` dikirim
   ulang tiap **1,5 detik** selama tombol ditahan sebagai heartbeat untuk failsafe firmware (motor
@@ -232,9 +267,9 @@ Ada dua sketch, masing-masing di foldernya sendiri:
 | Sketch | Untuk | Isi |
 |--------|-------|-----|
 | [`firmware/phantom_tes/`](firmware/phantom_tes/) | **Tes / latihan** | Kontrol gerak 0–8, servo lengan & capit, MLX90614 ke dashboard, RTC DS3231, log microSD. Tanpa batas suhu dan tanpa kirim ke web dosen. |
-| [`firmware/phantom_lomba/`](firmware/phantom_lomba/) | **Lomba** | Semua isi program tes **+ kirim ke web dosen** (Firebase): data suhu tiap 5 detik dan hotspot saat suhu ≥ batas. |
+| [`firmware/phantom_lomba/`](firmware/phantom_lomba/) | **Lomba** | Kontrol & sensor seperti program tes **+ kirim ke web dosen** (Firebase): data suhu tiap 5 detik dan hotspot saat suhu ≥ batas, **+ data logger** `/dataNN.txt` + device Ubidots `logger` tiap 10 detik. |
 
-Keduanya sudah diuji kompilasi (`arduino-cli`, ESP32 Dev Module): tes ±77% flash, lomba ±85%.
+Keduanya sudah diuji kompilasi (`arduino-cli`, ESP32 Dev Module, core esp32 3.3.2): tes ±77% flash, lomba ±86%.
 
 **Library** (Library Manager):
 
@@ -242,6 +277,7 @@ Keduanya sudah diuji kompilasi (`arduino-cli`, ESP32 Dev Module): tes ±77% flas
 - ESP32Servo
 - Adafruit MLX90614 (+ Adafruit BusIO)
 - RTClib (Adafruit)
+- ArduinoJson (Benoit Blanchon, versi 7) — hanya program lomba
 
 > **Kalau muncul error `ESP8266WiFi.h: No such file or directory`:** buka
 > `Arduino/libraries/<ubidots-mqtt-esp>/src/UbidotsESPMQTT.h`, lalu ganti baris
@@ -283,10 +319,28 @@ Catatan wiring:
 - Lepas jumper ENA/ENB di L298N. Motor kiri diparalel ke OUT1/OUT2, motor kanan ke OUT3/OUT4.
 - Servo diberi daya dari baterai servo (4,8–6 V), bukan dari pin 3V3/5V ESP32.
   **Semua GND harus disatukan.**
-- Kalau arah roda terbalik, ubah `MOTOR_KIRI_BALIK` / `MOTOR_KANAN_BALIK`. Kalau belok melengkung
-  terlalu tajam/landai, ubah `CURVE_RATIO` (kecepatan roda sisi dalam, default 0,4).
-- Sudut servo dikirim langsung dari dashboard (derajat). Posisi awal saat menyala: lengan 135°
-  (PARKIR), capit 90° (TUTUP).
+- Kalau arah roda terbalik, ubah `MOTOR_KIRI_BALIK` / `MOTOR_KANAN_BALIK` (hasil tes: roda kanan
+  terbalik, jadi `MOTOR_KANAN_BALIK = true`). Kalau belok melengkung terlalu tajam/landai, ubah
+  `CURVE_RATIO` (kecepatan roda sisi dalam, default 0,4).
+- **Putar di tempat (◀ KIRI / ▶ KANAN, gerak 3/4) selalu memakai `TURN_SPEED` = 255** lewat
+  `putarDiTempat()`. Di PWM 150 robot tidak mau berputar, karena kedua roda saling menahan. Maju, mundur,
+  dan belok melengkung tetap memakai nilai SPEED dari dashboard.
+- Sudut servo dikirim langsung dari dashboard (derajat) dan dibatasi di firmware dengan `constrain()`.
+  Batas hasil kalibrasi di robot asli:
+
+  | Servo | Batas firmware | Arti | Posisi awal saat menyala | Tombol dashboard |
+  |-------|----------------|------|--------------------------|------------------|
+  | Lengan (MG996R, arah terbalik) | `LENGAN_MIN`–`LENGAN_MAX` = 0–150° | 0° = naik mentok atas, 150° = turun maksimal | `LENGAN_AWAL` = 0° (NAIK) | NAIK 0°, BAWA 60°, TURUN 150° |
+  | Capit | `CAPIT_MIN`–`CAPIT_MAX` = 25–110° | 25° = buka, 110° = tutup | `CAPIT_AWAL` = 110° (TUTUP) | BUKA 25°, TUTUP 110° |
+
+  Kotak angka dan isian sudut di ⚙ Pengaturan dashboard dibatasi ke rentang yang sama. Pengaturan
+  lengan/capit lama yang tersimpan di browser (termasuk tombol PARKIR lama) otomatis diganti ke nilai
+  di atas. Pengaturan lain tidak disentuh.
+- Nama client MQTT tetap `garuda13-phantom` (`MQTT_CLIENT`), tidak lagi `00:00:00:00:00:00`.
+- **Balasan (ACK):** setelah perintah dijalankan, robot mengirim `ack_gerak` / `ack_lengan` /
+  `ack_capit` ke Ubidots dalam satu publish dari `loop()` (`kirimAck()`), tidak dari callback MQTT.
+  `ack_gerak` hanya dikirim saat gerak berubah (heartbeat dengan nilai sama tidak dibalas), saat
+  failsafe menghentikan motor (0), dan saat (re)connect (0).
 
 **Fitur keamanan:**
 
@@ -298,11 +352,28 @@ Catatan wiring:
 - Saat (re)connect, robot mengirim `gerak=0` (dan `kirim_hotspot=0` di program lomba) sebelum
   subscribe, supaya nilai lama di Ubidots tidak membuat robot jalan atau mengirim hotspot sendiri.
 
-**Interval:** MLX90614 dibaca tiap 1 detik (untuk log microSD) dan `suhu_objek`/`suhu_ambient`
-dikirim ke Ubidots tiap **5 detik** (`PUBLISH_INTERVAL_MS`). **Log microSD** ditulis tiap detik ke
-`/phantom_tes.csv` atau `/phantom_lomba.csv` (`waktu,suhu_objek,suhu_ambient,gerak,speed,lengan,capit`,
-plus `fb_code` di program lomba). Kalau kartu tidak ada, robot tetap jalan tanpa log. Jam DS3231
-disinkronkan otomatis dari NTP (WIB) saat online.
+**Interval:** MLX90614 dibaca tiap 1 detik dan **hanya `suhu_objek`** yang dikirim ke device `phantom`
+tiap **5 detik** (`PUBLISH_INTERVAL_MS`). Suhu ambient tidak dibaca lagi.
+
+**Log microSD program tes:** tiap detik ke `/phantom_tes.csv` (`waktu,suhu_objek,gerak,speed,lengan,capit`).
+Jam DS3231 disinkronkan dari NTP (WIB) saat online.
+
+**Data logger program lomba** (seperti data logger minggu 7, tanpa OLED, hanya suhu objek):
+
+- File di microSD: `/data01.txt` … `/data99.txt`. Saat menyala dipakai nomor pertama yang belum ada.
+  File baru juga dibuat setiap WiFi tersambung lagi setelah putus, asal file sekarang sudah berisi data.
+- Tiap **10 detik**: ambilWaktu → bacaData → simpanData → kirimData → simpanKode. Satu baris:
+  `2026-11-26 10:15:20, 31.47, 200` (waktu RTC, suhu objek, kode HTTP kiriman baris itu).
+- Kiriman: `POST https://industrial.api.ubidots.com/api/v1.6/devices/logger` (header `X-Auth-Token`
+  dari `secrets.h`, timeout 5 detik). Isinya `suhu_objek` (value, timestamp, context `waktu`),
+  `data_ke`, dan `http_code` kiriman sebelumnya. Timestamp = waktu RTC dalam WIB dikurangi 7 jam (UTC),
+  dalam milidetik.
+- Kode `-1` = WiFi putus, `0` = suhu tidak terbaca (tidak dikirim).
+- Waktu diambil **langsung dari RTC DS3231**: program lomba tidak memakai NTP dan tidak pernah
+  mengubah jam RTC. Atur jam RTC sekali dengan program terpisah (mis. program RTC minggu sebelumnya).
+- Kiriman logger dan web dosen bergantian di satu task latar (core 0), jadi tidak ada dua koneksi
+  HTTPS bersamaan dan motor/failsafe tidak tertahan. Kalau microSD, RTC, atau MLX90614 tidak ada, robot
+  tetap jalan; microSD dicoba lagi tiap 30 detik dan RTC tiap 10 detik.
 
 **Web dosen (hanya `phantom_lomba`):** robot mengirim `PATCH` JSON ke `SECRET_FIREBASE_URL`, sama
 seperti contoh kode dosen:
@@ -322,8 +393,11 @@ Sesuai aturan lomba, robot **tidak pernah membuat WiFi/hotspot sendiri**. ESP32 
 sebagai *station* (`WIFI_STA`) dan terhubung ke hotspot HP yang namanya ditulis di `secrets.h`.
 
 1. Nyalakan hotspot HP dengan nama & password yang sama dengan `SECRET_WIFI_SSID` / `SECRET_WIFI_PASS`.
-2. Nyalakan robot. Ia mencoba terhubung, dan mengulang tiap 10 detik kalau gagal.
+2. Nyalakan robot. Ia mencoba terhubung, dan mengulang tiap 30 detik kalau gagal.
 3. Buka Serial Monitor (115200) untuk melihat IP dan status MQTT/Firebase.
 
 Selama WiFi atau MQTT putus, motor selalu berhenti. Untuk mengganti hotspot, ubah `secrets.h` lalu
 upload ulang.
+
+Serial Monitor juga menampilkan heap bebas tiap 10 detik (`DEBUG_HEAP = true`), untuk memastikan memori
+cukup saat koneksi HTTPS ke web dosen dan data logger berjalan. Ubah ke `false` kalau log tidak diperlukan.

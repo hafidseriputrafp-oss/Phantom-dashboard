@@ -46,27 +46,33 @@ char VAR_SPEED[]        = "speed";
 char VAR_LENGAN[]       = "lengan";
 char VAR_CAPIT[]        = "capit";
 char VAR_SUHU_OBJEK[]   = "suhu_objek";
-char VAR_SUHU_AMBIENT[] = "suhu_ambient";
+char VAR_ACK_GERAK[]    = "ack_gerak";
+char VAR_ACK_LENGAN[]   = "ack_lengan";
+char VAR_ACK_CAPIT[]    = "ack_capit";
 
 // ---------- PARAMETER ----------
+const bool DEBUG_HEAP = true;
+const unsigned long HEAP_LOG_MS = 10000;
 const unsigned long PUBLISH_INTERVAL_MS = 5000;   // kirim suhu ke Ubidots
 const unsigned long SENSOR_INTERVAL_MS  = 1000;   // baca sensor & log microSD
 const unsigned long HEARTBEAT_MS        = 1500;   // dashboard kirim ulang "gerak" tiap 1,5 dtk saat ditahan
 const unsigned long FAILSAFE_TIMEOUT_MS = HEARTBEAT_MS + 1500;   // toleransi antrean request + jaringan
 const unsigned long MQTT_RETRY_MS       = 3000;
-const unsigned long WIFI_RETRY_MS       = 10000;
+const unsigned long WIFI_RETRY_MS       = 30000;
 const long          GMT_OFFSET_S        = 7 * 3600;   // WIB
 const char*         LOG_FILE            = "/phantom_tes.csv";
 
 const uint32_t MOTOR_PWM_FREQ    = 1000;
 const uint8_t  MOTOR_PWM_BITS    = 8;
 const bool     MOTOR_KIRI_BALIK  = false;   // ubah jika arah roda kiri terbalik
-const bool     MOTOR_KANAN_BALIK = false;
+const bool     MOTOR_KANAN_BALIK = true;
 const uint8_t  SPEED_DEFAULT     = 150;
 const float    CURVE_RATIO       = 0.4;     // kecepatan roda sisi dalam saat belok melengkung
+const uint8_t  TURN_SPEED        = 255;     // putar di tempat: roda saling menahan, perlu PWM penuh
 
-const int SERVO_MIN_DEG = 0, SERVO_MAX_DEG = 180;
-const int LENGAN_AWAL = 135, CAPIT_AWAL = 90;   // PARKIR & TUTUP di dashboard
+const int LENGAN_MIN = 0, LENGAN_MAX = 150;    // MG996R terbalik: 0 = naik mentok, 150 = turun maksimal
+const int CAPIT_MIN = 25, CAPIT_MAX = 110;     // 25 = buka, 110 = tutup
+const int LENGAN_AWAL = 0, CAPIT_AWAL = 110;
 const int SERVO_MIN_US = 500, SERVO_MAX_US = 2400;
 
 // ---------- OBJEK ----------
@@ -76,7 +82,8 @@ enum Move {
 };
 const char* MOVE_NAMES[] = { "STOP", "MAJU", "MUNDUR", "PUTAR KIRI", "PUTAR KANAN", "MAJU-KIRI", "MAJU-KANAN", "MUNDUR-KIRI", "MUNDUR-KANAN" };
 
-Ubidots ubidots(UBIDOTS_TOKEN);
+char MQTT_CLIENT[] = "garuda13-phantom";
+Ubidots ubidots(UBIDOTS_TOKEN, MQTT_CLIENT);
 Adafruit_MLX90614 mlx;
 RTC_DS3231 rtc;
 Servo servoLengan, servoCapit;
@@ -87,7 +94,20 @@ Move currentMove = MOVE_STOP;
 uint8_t currentSpeed = SPEED_DEFAULT;
 int lenganDeg = LENGAN_AWAL, capitDeg = CAPIT_AWAL;
 unsigned long lastCommandMs = 0;
-float suhuObjek = NAN, suhuAmbient = NAN;
+int lastCmdGerak = MOVE_STOP;
+struct Ack {
+  bool pending;
+  int value;
+  char* ubiVar;
+};
+enum { ACK_GERAK = 0, ACK_LENGAN = 1, ACK_CAPIT = 2, ACK_JUMLAH = 3 };
+Ack acks[ACK_JUMLAH] = {
+  { false, 0, VAR_ACK_GERAK },
+  { false, 0, VAR_ACK_LENGAN },
+  { false, 0, VAR_ACK_CAPIT },
+};
+unsigned long lastHeapLogMs = 0;
+float suhuObjek = NAN;
 
 bool mlxOk = false, rtcOk = false, sdOk = false;
 bool wifiWasConnected = false, timeSynced = false, ntpStarted = false;
@@ -120,13 +140,18 @@ void driveMotors(int kiri, int kanan, float skalaKiri, float skalaKanan) {
   setMotor(pwmKanan, PIN_MOTOR_IN3, PIN_MOTOR_IN4, kanan, (uint8_t)(currentSpeed * skalaKanan), MOTOR_KANAN_BALIK);
 }
 
+void putarDiTempat(int kiri, int kanan) {
+  setMotor(pwmKiri, PIN_MOTOR_IN1, PIN_MOTOR_IN2, kiri, TURN_SPEED, MOTOR_KIRI_BALIK);
+  setMotor(pwmKanan, PIN_MOTOR_IN3, PIN_MOTOR_IN4, kanan, TURN_SPEED, MOTOR_KANAN_BALIK);
+}
+
 void applyMove(Move m) {
   currentMove = m;
   switch (m) {
     case MOVE_MAJU:          driveMotors(1, 1, 1.0, 1.0);   break;
     case MOVE_MUNDUR:        driveMotors(-1, -1, 1.0, 1.0); break;
-    case MOVE_KIRI:          driveMotors(-1, 1, 1.0, 1.0);  break;
-    case MOVE_KANAN:         driveMotors(1, -1, 1.0, 1.0);  break;
+    case MOVE_KIRI:          putarDiTempat(-1, 1);          break;
+    case MOVE_KANAN:         putarDiTempat(1, -1);          break;
     case MOVE_MAJU_KIRI:     driveMotors(1, 1, CURVE_RATIO, 1.0);   break;
     case MOVE_MAJU_KANAN:    driveMotors(1, 1, 1.0, CURVE_RATIO);   break;
     case MOVE_MUNDUR_KIRI:   driveMotors(-1, -1, CURVE_RATIO, 1.0); break;
@@ -154,12 +179,12 @@ void setupMotors() {
 // SERVO
 // =====================================================================
 void setLengan(int deg) {
-  lenganDeg = constrain(deg, SERVO_MIN_DEG, SERVO_MAX_DEG);
+  lenganDeg = constrain(deg, LENGAN_MIN, LENGAN_MAX);
   servoLengan.write(lenganDeg);
 }
 
 void setCapit(int deg) {
-  capitDeg = constrain(deg, SERVO_MIN_DEG, SERVO_MAX_DEG);
+  capitDeg = constrain(deg, CAPIT_MIN, CAPIT_MAX);
   servoCapit.write(capitDeg);
 }
 
@@ -182,10 +207,8 @@ void readSensors() {
   }
   if (mlxOk) {
     suhuObjek = mlx.readObjectTempC();
-    suhuAmbient = mlx.readAmbientTempC();
   } else {
     suhuObjek = NAN;
-    suhuAmbient = NAN;
   }
 }
 
@@ -243,7 +266,7 @@ void setupSd() {
   if (sdOk && !SD.exists(LOG_FILE)) {
     File f = SD.open(LOG_FILE, FILE_WRITE);
     if (f) {
-      f.println("waktu,suhu_objek,suhu_ambient,gerak,speed,lengan,capit");
+      f.println("waktu,suhu_objek,gerak,speed,lengan,capit");
       f.close();
     } else {
       sdOk = false;
@@ -266,7 +289,7 @@ void logToSd() {
   }
   char ts[24];
   formatTimestamp(ts, sizeof(ts));
-  f.printf("%s,%.2f,%.2f,%d,%d,%d,%d\n", ts, suhuObjek, suhuAmbient, (int)currentMove, currentSpeed, lenganDeg, capitDeg);
+  f.printf("%s,%.2f,%d,%d,%d,%d\n", ts, suhuObjek, (int)currentMove, currentSpeed, lenganDeg, capitDeg);
   f.close();
 }
 
@@ -308,44 +331,85 @@ void handleWiFi() {
 // =====================================================================
 // UBIDOTS MQTT
 // =====================================================================
-bool topicIs(const char* topic, const char* variable) {
-  char suffix[40];
-  snprintf(suffix, sizeof(suffix), "/%s/lv", variable);
-  return strstr(topic, suffix) != nullptr;
+void tandaiAck(int idx, int v) {
+  acks[idx].value = v;
+  acks[idx].pending = true;
+}
+
+void terimaGerak(int value) {
+  lastCommandMs = millis();
+  Move m = MOVE_STOP;
+  if (value >= MOVE_STOP && value <= MOVE_MUNDUR_KANAN) m = (Move)value;
+  bool berubah = m != currentMove || m != lastCmdGerak;
+  lastCmdGerak = m;
+  applyMove(m);
+  if (berubah) tandaiAck(ACK_GERAK, currentMove);
+}
+
+void prosesPerintah(const char* nama, const char* teks) {
+  int value = (int)lroundf(atof(teks));
+  if (strcmp(nama, VAR_GERAK) == 0) {
+    terimaGerak(value);
+  } else if (strcmp(nama, VAR_SPEED) == 0) {
+    currentSpeed = constrain(value, 0, 255);
+    applyMove(currentMove);
+  } else if (strcmp(nama, VAR_LENGAN) == 0) {
+    setLengan(value);
+    tandaiAck(ACK_LENGAN, lenganDeg);
+  } else if (strcmp(nama, VAR_CAPIT) == 0) {
+    setCapit(value);
+    tandaiAck(ACK_CAPIT, capitDeg);
+  }
+  Serial.printf("RX %s = %d\n", nama, value);
+}
+
+void salinPayload(byte* payload, unsigned int length, char* buf, size_t size) {
+  unsigned int n = length;
+  if (n > size - 1) n = size - 1;
+  memcpy(buf, payload, n);
+  buf[n] = '\0';
+}
+
+bool ambilNama(const char* topic, const char* awalan, const char* akhiran, char* out, size_t size) {
+  size_t la = strlen(awalan), lt = strlen(topic), lk = strlen(akhiran);
+  if (strncmp(topic, awalan, la) != 0 || lt < la + lk) return false;
+  if (lk > 0 && strcmp(topic + lt - lk, akhiran) != 0) return false;
+  size_t n = lt - la - lk;
+  if (n == 0 || n >= size) return false;
+  memcpy(out, topic + la, n);
+  out[n] = '\0';
+  return true;
 }
 
 void onMqttMessage(char* topic, byte* payload, unsigned int length) {
-  char buf[16];
-  unsigned int n;
-  if (length < sizeof(buf) - 1) {
-    n = length;
-  } else {
-    n = sizeof(buf) - 1;
-  }
-  memcpy(buf, payload, n);
-  buf[n] = '\0';
-  int value = (int)lroundf(atof(buf));
+  char awalan[40], nama[24], teks[16];
+  snprintf(awalan, sizeof(awalan), "/v1.6/devices/%s/", DEVICE_LABEL);
+  if (!ambilNama(topic, awalan, "/lv", nama, sizeof(nama))) return;
+  salinPayload(payload, length, teks, sizeof(teks));
+  prosesPerintah(nama, teks);
+}
 
-  if (topicIs(topic, VAR_GERAK)) {
-    lastCommandMs = millis();
-    if (value >= MOVE_STOP && value <= MOVE_MUNDUR_KANAN) {
-      applyMove((Move)value);
-    } else {
-      applyMove(MOVE_STOP);
-    }
-  } else if (topicIs(topic, VAR_SPEED)) {
-    currentSpeed = constrain(value, 0, 255);
-    applyMove(currentMove);
-  } else if (topicIs(topic, VAR_LENGAN)) {
-    setLengan(value);
-  } else if (topicIs(topic, VAR_CAPIT)) {
-    setCapit(value);
+void kirimAck() {
+  if (WiFi.status() != WL_CONNECTED || !ubidots.connected()) return;
+  int count = 0;
+  for (int i = 0; i < ACK_JUMLAH; i++) {
+    if (!acks[i].pending) continue;
+    ubidots.add(acks[i].ubiVar, acks[i].value);
+    acks[i].pending = false;
+    count++;
   }
-  Serial.printf("RX %s = %d\n", topic, value);
+  if (count > 0) ubidots.ubidotsPublish(DEVICE_LABEL);
+}
+
+void logHeap() {
+  if (!DEBUG_HEAP || millis() - lastHeapLogMs < HEAP_LOG_MS) return;
+  lastHeapLogMs = millis();
+  Serial.printf("Heap bebas %lu B (minimum %lu B)\n", (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap());
 }
 
 void onMqttConnected() {
   Serial.println("MQTT Ubidots terhubung");
+  tandaiAck(ACK_GERAK, MOVE_STOP);
   ubidots.add(VAR_GERAK, 0);
   ubidots.ubidotsPublish(DEVICE_LABEL);
   ubidots.ubidotsSubscribe(DEVICE_LABEL, VAR_GERAK);
@@ -371,7 +435,6 @@ void publishSensors() {
   if (WiFi.status() != WL_CONNECTED || !ubidots.connected()) return;
   int count = 0;
   if (!isnan(suhuObjek))   { ubidots.add(VAR_SUHU_OBJEK, suhuObjek); count++; }
-  if (!isnan(suhuAmbient)) { ubidots.add(VAR_SUHU_AMBIENT, suhuAmbient); count++; }
   if (count > 0) ubidots.ubidotsPublish(DEVICE_LABEL);
 }
 
@@ -383,6 +446,7 @@ void handleFailsafe() {
   bool linkOk = WiFi.status() == WL_CONNECTED && ubidots.connected();
   if (!linkOk || millis() - lastCommandMs > FAILSAFE_TIMEOUT_MS) {
     stopMotors();
+    tandaiAck(ACK_GERAK, MOVE_STOP);
     if (linkOk) Serial.printf("FAILSAFE: tidak ada heartbeat > %lu ms\n", FAILSAFE_TIMEOUT_MS);
     else Serial.println("FAILSAFE: koneksi terputus");
   }
@@ -415,6 +479,8 @@ void loop() {
   handleWiFi();
   handleMqtt();
   handleFailsafe();
+  kirimAck();
+  logHeap();
   handleTimeSync();
 
   unsigned long now = millis();

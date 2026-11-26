@@ -23,15 +23,15 @@ const THEMES = [
 ];
 
 const DEFAULT_SETTINGS = {
-  v: 3,
+  v: 6,
   device: "phantom",
   pollInterval: 3,
   theme: "garuda",
   mode: "dark",
   batas: 50,
   mqtt: true,
-  lengan: { turun: 25, bawa: 60, parkir: 135, min: 25, max: 135 },
-  capit: { buka: 118, tutup: 90, min: 40, max: 150 },
+  lengan: { naik: 0, bawa: 60, turun: 150, min: 0, max: 150 },
+  capit: { buka: 25, tutup: 110, min: 25, max: 110 },
 };
 
 const ROBOT_VARS = ["suhu_objek", "fb_code", "hotspot"];
@@ -50,7 +50,7 @@ const MQTT_LIB_SRI = "sha384-ilRYg/zm2XqUafLvBoGVk40UfNRnvUkYMy+e/JPo4YgsFR6X9Q3
 const MQTT_URLS = ["wss://industrial.api.ubidots.com:8084/mqtt", "wss://industrial.api.ubidots.com:8084"];
 const MQTT_CONNECT_MS = 5000;
 const MQTT_ACK_MS = 1500;
-const SLIDER_THROTTLE_MS = 700;
+const CLAMP_NOTE_MS = 4000;
 const ROBOT_ONLINE_MS = 15000;
 const ROBOT_LATE_MS = 60000;
 const STALE_MS = 20000;
@@ -86,11 +86,27 @@ function num(v, fallback) {
   return n;
 }
 
+const SERVO_LIMITS = { lengan: { min: 0, max: 150 }, capit: { min: 25, max: 110 } };
+const VALUE_LIMITS = { speed: { min: 0, max: 255 }, ...SERVO_LIMITS };
+
+function migrateServo(servo, saved, oldVersion) {
+  const lim = SERVO_LIMITS[servo];
+  const def = DEFAULT_SETTINGS[servo];
+  const out = {};
+  for (const key of Object.keys(def)) {
+    const v = Number(saved && saved[key]);
+    const usang = oldVersion < 6 || !saved || !Number.isFinite(v) || v < lim.min || v > lim.max;
+    out[key] = usang ? def[key] : v;
+  }
+  return out;
+}
+
 function loadSettings() {
   const saved = store.get(KEY_SETTINGS, {}) || {};
   const s = { ...DEFAULT_SETTINGS, ...saved };
-  s.lengan = { ...DEFAULT_SETTINGS.lengan, ...(saved.lengan || {}) };
-  s.capit = { ...DEFAULT_SETTINGS.capit, ...(saved.capit || {}) };
+  const oldVersion = Number(saved.v) || 0;
+  s.lengan = migrateServo("lengan", saved.lengan, oldVersion);
+  s.capit = migrateServo("capit", saved.capit, oldVersion);
   s.batas = num(saved.batas, DEFAULT_SETTINGS.batas);
   s.pollInterval = Math.max(1, num(s.pollInterval, DEFAULT_SETTINGS.pollInterval));
   if (!THEMES.some((t) => t.id === s.theme)) s.theme = DEFAULT_SETTINGS.theme;
@@ -117,7 +133,8 @@ const state = {
   chart: null,
   lastChartTs: 0,
   bannerKind: "",
-  sliderTimers: {},
+  noteTimers: {},
+  active: { speed: 150, lengan: 0, capit: 110 },
 };
 
 /* ---------- Utilitas ---------- */
@@ -345,7 +362,22 @@ async function fastStart() {
     clearTimeout(fast.timer);
     fast.ready = true;
     fast.fails = 0;
+    const dev = state.settings.device;
+    try {
+      client.subscribe(Object.values(ACK_VARS).map((v) => `/v1.6/devices/${dev}/${v}/lv`), { qos: 0 }, () => {});
+    } catch {}
     showNet();
+  });
+  client.on("message", (topic, payload) => {
+    if (fast.client !== client) return;
+    const label = String(topic).split("/")[4];
+    const variable = Object.keys(ACK_VARS).find((k) => ACK_VARS[k] === label);
+    const text = String(payload);
+    let value = Number(text);
+    if (Number.isNaN(value)) {
+      try { value = Number(JSON.parse(text).value); } catch {}
+    }
+    if (variable && Number.isFinite(value)) onAck(variable, Math.round(value));
   });
   client.on("error", down);
   client.on("close", down);
@@ -394,10 +426,12 @@ function fastPublish(values) {
 async function transmit(values) {
   if (fast.ready) {
     try {
-      return await fastPublish(values);
+      const qos = await fastPublish(values);
+      return { via: "mqtt", qos };
     } catch {}
   }
-  return postValues(values);
+  await postValues(values);
+  return { via: "rest" };
 }
 
 function showNet() {
@@ -479,6 +513,7 @@ function markPending(variable, busy) {
 }
 
 function send(variable, value, priority = PRIORITY.control) {
+  if (ACK_VARS[variable] && variable !== "gerak") ackBegin("servo", variable, value);
   const q = state.sendQ[variable] || (state.sendQ[variable] = { busy: false, has: false, value: null, priority });
   q.value = value;
   q.has = true;
@@ -498,7 +533,8 @@ async function flush(variable, q) {
       return transmit({ [variable]: sent });
     };
     try {
-      await (fast.ready ? job() : limiter.run(job, q.priority));
+      const r = await (fast.ready ? job() : limiter.run(job, q.priority));
+      if (ACK_VARS[variable]) ackServer("servo", variable, sent, r);
       tries = 0;
     } catch (e) {
       if (RETRYABLE.has(e.kind) && ++tries < 4) {
@@ -528,13 +564,14 @@ async function deliverGerak(v) {
       const qos = await fastPublish({ gerak: v });
       state.net = { path: "MQTT", ms: qos ? Math.round(performance.now() - t0) : null };
       showNet();
-      return;
+      return { via: "mqtt", qos };
     } catch {}
   }
   limiter.last = Date.now();
   await postValues({ gerak: v });
   state.net = { path: "REST", ms: Math.round(performance.now() - t0) };
   showNet();
+  return { via: "rest" };
 }
 
 function queueGerak(v) {
@@ -570,7 +607,8 @@ async function pumpGerak() {
     markPending("gerak", true);
     for (let tries = 1; ; tries++) {
       try {
-        await deliverGerak(v);
+        const r = await deliverGerak(v);
+        ackServer("gerak", "gerak", v, r);
         if (state.bannerKind === "ratelimit") setBanner("");
         break;
       } catch (e) {
@@ -617,6 +655,106 @@ function parallelStop() {
   deliverGerak(0).catch(() => {});
 }
 
+/* ---------- Status perintah: dikirim → sampai server → terlaksana robot ---------- */
+
+const ACK_TIMEOUT_MS = 3000;
+const ACK_VARS = { gerak: "ack_gerak", lengan: "ack_lengan", capit: "ack_capit" };
+const ACK_NAMES = { 0: "STOP", 1: "MAJU", 2: "MUNDUR", 3: "KIRI", 4: "KANAN", 5: "MAJU-KIRI", 6: "MAJU-KANAN", 7: "MUNDUR-KIRI", 8: "MUNDUR-KANAN" };
+const acks = { gerak: { sel: "#ack-gerak", cycle: null, timer: null }, servo: { sel: "#ack-servo", cycle: null, timer: null } };
+const robotState = { gerak: null, lengan: null, capit: null };
+const recentServo = { lengan: [], capit: [] };
+
+function ackLabel(variable, value) {
+  if (variable === "gerak") return ACK_NAMES[value] || `GERAK ${value}`;
+  return `${variable.toUpperCase()} ${value}°`;
+}
+
+function ackShow(slot, text, kind) {
+  const el = $(acks[slot].sel);
+  if (!el) return;
+  el.textContent = text;
+  el.className = `ack tiny ${kind}`;
+  el.title = text;
+}
+
+function ackRender(slot) {
+  const c = acks[slot].cycle;
+  if (!c) return;
+  const label = ackLabel(c.variable, c.value);
+  if (c.stage === "sent") ackShow(slot, `⏳ ${label} dikirim…`, "sent");
+  else if (c.stage === "server" && c.rest) ackShow(slot, `📡 ${label} sampai di server (balasan robot butuh jalur MQTT)`, "server");
+  else if (c.stage === "server") ackShow(slot, `📡 ${label} sampai di server`, "server");
+  else if (c.stage === "already") ackShow(slot, `✅ ${label} — robot sudah dalam kondisi ini`, "done");
+  else if (c.stage === "fail") ackShow(slot, `❌ Robot tidak membalas (${label})`, "fail");
+  else if (c.stage === "done" && c.got !== c.value) ackShow(slot, `✅ ${ackLabel(c.variable, c.got)} terlaksana (diminta ${c.value}°, ${c.ms} ms)`, "done");
+  else if (c.stage === "done") ackShow(slot, `✅ ${label} terlaksana (${c.ms} ms)`, "done");
+}
+
+function ackBegin(slot, variable, value) {
+  const a = acks[slot];
+  clearTimeout(a.timer);
+  a.cycle = { variable, value, got: value, t0: performance.now(), stage: "sent", rest: !fast.ready, ms: 0 };
+  if (variable !== "gerak") {
+    const list = recentServo[variable];
+    a.cycle.entry = { value, t: Date.now(), acked: false };
+    list.push(a.cycle.entry);
+    while (list.length > 8) list.shift();
+  }
+  if (variable === "gerak" && robotState.gerak === value && gerak.sent === value && !gerak.busy && !gerak.queue.length) {
+    a.cycle.stage = "already";
+  } else if (fast.ready) {
+    a.timer = setTimeout(() => {
+      if (a.cycle && a.cycle.stage !== "done" && a.cycle.stage !== "already") {
+        a.cycle.stage = "fail";
+        ackRender(slot);
+      }
+    }, ACK_TIMEOUT_MS);
+  }
+  ackRender(slot);
+}
+
+function ackServer(slot, variable, value, via) {
+  const c = acks[slot].cycle;
+  if (!c || c.variable !== variable || c.value !== value || c.stage !== "sent") return;
+  if (!via || (via.via === "mqtt" && !via.qos)) return;
+  c.rest = via.via === "rest";
+  c.stage = "server";
+  ackRender(slot);
+}
+
+function onAck(variable, value) {
+  robotState[variable] = value;
+  const slot = variable === "gerak" ? "gerak" : "servo";
+  const a = acks[slot];
+  const c = a.cycle;
+  if (!c || c.variable !== variable) return;
+  if (c.stage === "done" || c.stage === "already") {
+    if (variable === "gerak" && value === 0 && c.value !== 0 && state.drive.dir) ackShow(slot, "⚠ Robot berhenti sendiri (failsafe)", "fail");
+    else if (variable === "gerak" && value === c.value) ackRender(slot);
+    return;
+  }
+  if (variable !== "gerak") {
+    const hit = recentServo[variable].find((x) => !x.acked && x.value === value && Date.now() - x.t < 10000);
+    if (hit) hit.acked = true;
+    if (value !== c.value && hit && hit !== c.entry) return;
+    c.entry.acked = true;
+  } else if (value !== c.value) {
+    return;
+  }
+  clearTimeout(a.timer);
+  c.got = value;
+  c.ms = Math.round(performance.now() - c.t0);
+  c.stage = "done";
+  ackRender(slot);
+}
+
+function seedRobotState(values) {
+  for (const [variable, label] of Object.entries(ACK_VARS)) {
+    const d = values[label];
+    if (d && robotState[variable] === null) robotState[variable] = Math.round(d.value);
+  }
+}
+
 /* ---------- Gerak (tahan = jalan, lepas = berhenti) ---------- */
 
 const DIR_VEC = { 1: [1, 0], 2: [-1, 0], 3: [0, -1], 4: [0, 1], 5: [1, -1], 6: [1, 1], 7: [-1, -1], 8: [-1, 1] };
@@ -646,6 +784,7 @@ function applyDrive() {
   showDrive(dir);
   if (state.drive.dir === dir) return;
   state.drive = { dir };
+  ackBegin("gerak", "gerak", dir);
   if (!dir) {
     stopNow();
     schedulePoll(POLL_RESUME_MS);
@@ -698,6 +837,7 @@ function emergencyStop() {
   const btn = $("#estop");
   btn.classList.add("fired");
   setTimeout(() => btn.classList.remove("fired"), 300);
+  ackBegin("gerak", "gerak", 0);
   clearStopGuards();
   gerak.queue.length = 0;
   gerak.dirAt = 0;
@@ -736,63 +876,91 @@ function bindPad() {
   });
 }
 
-/* ---------- Slider (speed, lengan, capit) ---------- */
+/* ---------- Kotak angka + KIRIM (speed, lengan, capit) ---------- */
 
-const SLIDERS = ["speed", "lengan", "capit"];
+const VALUE_VARS = ["speed", "lengan", "capit"];
 
-function showSlider(variable) {
-  const input = $(`#${variable}`);
+function valueRange(variable) {
+  const hw = VALUE_LIMITS[variable];
+  const s = state.settings[variable];
+  if (!s) return hw;
+  return { min: Math.max(hw.min, Math.min(s.min, s.max)), max: Math.min(hw.max, Math.max(s.min, s.max)) };
+}
+
+function showValue(variable) {
+  const v = state.active[variable];
   const unit = variable === "speed" ? "" : "°";
-  $(`#${variable}-out`).textContent = `${input.value}${unit}`;
+  let text = "—";
+  if (Number.isFinite(v)) text = `${v}${unit}`;
+  $(`#${variable}-out`).textContent = text;
   if (variable === "speed") return;
   const presets = state.settings[variable];
   document.querySelectorAll(`.presets[data-servo="${variable}"] [data-preset]`).forEach((b) => {
-    b.classList.toggle("on", Number(presets[b.dataset.preset]) === Number(input.value));
+    b.classList.toggle("on", Number(presets[b.dataset.preset]) === v);
   });
 }
 
-function sendSlider(variable, now) {
-  const value = Number($(`#${variable}`).value);
-  clearTimeout(state.sliderTimers[variable]);
-  if (now) {
-    send(variable, value);
+function showClampNote(variable, text) {
+  const note = $(`#${variable}-note`);
+  clearTimeout(state.noteTimers[variable]);
+  note.textContent = text;
+  note.hidden = !text;
+  if (text) state.noteTimers[variable] = setTimeout(() => { note.hidden = true; }, CLAMP_NOTE_MS);
+}
+
+function setValue(variable, value, transmit) {
+  const r = valueRange(variable);
+  const v = Math.min(r.max, Math.max(r.min, Math.round(value)));
+  state.active[variable] = v;
+  $(`#${variable}`).value = v;
+  showValue(variable);
+  if (transmit) send(variable, v);
+  return v;
+}
+
+function kirimNilai(variable) {
+  const input = $(`#${variable}`);
+  input.dataset.touched = "1";
+  const raw = Number(String(input.value).replace(",", "."));
+  if (input.value === "" || !Number.isFinite(raw)) {
+    showClampNote(variable, "isi angka dulu");
     return;
   }
-  state.sliderTimers[variable] = setTimeout(() => send(variable, value), SLIDER_THROTTLE_MS);
+  const v = setValue(variable, raw, true);
+  if (v !== Math.round(raw)) showClampNote(variable, `dibatasi ke ${v}`);
+  else showClampNote(variable, "");
+  vibrate(15);
 }
 
-function setSlider(variable, value, transmit) {
-  const input = $(`#${variable}`);
-  input.value = value;
-  showSlider(variable);
-  if (transmit) sendSlider(variable, true);
-}
-
-function applySliderLimits() {
-  for (const v of ["lengan", "capit"]) {
-    const s = state.settings[v];
+function applyValueLimits() {
+  for (const v of VALUE_VARS) {
+    const r = valueRange(v);
     const input = $(`#${v}`);
-    input.min = Math.min(s.min, s.max);
-    input.max = Math.max(s.min, s.max);
-    showSlider(v);
+    input.min = r.min;
+    input.max = r.max;
+    input.placeholder = `${r.min}–${r.max}`;
+    const cur = state.active[v];
+    if (Number.isFinite(cur) && (cur < r.min || cur > r.max)) setValue(v, cur, false);
+    showValue(v);
   }
 }
 
-function bindSliders() {
-  for (const v of SLIDERS) {
+function bindValues() {
+  for (const v of VALUE_VARS) {
     const input = $(`#${v}`);
-    input.addEventListener("input", () => {
-      input.dataset.touched = "1";
-      showSlider(v);
-      sendSlider(v, false);
+    input.value = state.active[v];
+    $(`#${v}-form`).addEventListener("submit", (e) => {
+      e.preventDefault();
+      kirimNilai(v);
     });
-    input.addEventListener("change", () => sendSlider(v, true));
+    input.addEventListener("input", () => { input.dataset.touched = "1"; });
   }
   document.querySelectorAll(".presets [data-preset]").forEach((b) => {
     onTap(b, () => {
       const servo = b.closest(".presets").dataset.servo;
       $(`#${servo}`).dataset.touched = "1";
-      setSlider(servo, state.settings[servo][b.dataset.preset], true);
+      showClampNote(servo, "");
+      setValue(servo, state.settings[servo][b.dataset.preset], true);
       vibrate(15);
     });
   });
@@ -915,13 +1083,13 @@ function updateRobotStatus() {
   }
 }
 
-function syncSliders() {
+function syncValues() {
   if (!state.firstSync) return;
   state.firstSync = false;
-  for (const v of SLIDERS) {
+  for (const v of VALUE_VARS) {
     const d = state.values[v];
     const input = $(`#${v}`);
-    if (d && !input.dataset.touched) setSlider(v, d.value, false);
+    if (d && !input.dataset.touched) setValue(v, d.value, false);
   }
 }
 
@@ -1025,8 +1193,9 @@ async function poll() {
   state.polling = true;
   try {
     state.values = await readValues();
+    seedRobotState(state.values);
     if (state.bannerKind) setBanner("");
-    syncSliders();
+    syncValues();
     updateRobotStatus();
     updateTemp();
     updateWeb();
@@ -1122,7 +1291,7 @@ function saveSettings() {
 }
 
 const ANGLE_FIELDS = [
-  ["lengan", "turun"], ["lengan", "bawa"], ["lengan", "parkir"], ["lengan", "min"], ["lengan", "max"],
+  ["lengan", "naik"], ["lengan", "bawa"], ["lengan", "turun"], ["lengan", "min"], ["lengan", "max"],
   ["capit", "buka"], ["capit", "tutup"], ["capit", "min"], ["capit", "max"],
 ];
 
@@ -1162,7 +1331,8 @@ function applySettings() {
     capit: { ...s.capit },
   };
   for (const [servo, key] of ANGLE_FIELDS) {
-    next[servo][key] = Math.min(180, Math.max(0, Math.round(num(form.elements[`${servo}-${key}`].value, s[servo][key]))));
+    const lim = SERVO_LIMITS[servo];
+    next[servo][key] = Math.min(lim.max, Math.max(lim.min, Math.round(num(form.elements[`${servo}-${key}`].value, s[servo][key]))));
   }
   state.settings = next;
   saveSettings();
@@ -1172,11 +1342,11 @@ function applySettings() {
     state.token = token;
     store.set(KEY_TOKEN, token);
   }
-  if (tokenChanged || next.mqtt !== s.mqtt) {
+  if (tokenChanged || deviceChanged || next.mqtt !== s.mqtt) {
     fast.fails = 0;
     fastStart();
   }
-  applySliderLimits();
+  applyValueLimits();
   if (deviceChanged) {
     state.readMode = "v2";
     state.firstSync = true;
@@ -1212,8 +1382,7 @@ function showApp() {
   state.firstSync = true;
   state.lastSeen = 0;
   initChart();
-  applySliderLimits();
-  showSlider("speed");
+  applyValueLimits();
   updateRobotStatus();
   updateTemp();
   updateWeb();
@@ -1286,7 +1455,7 @@ function bindEvents() {
   });
 
   bindPad();
-  bindSliders();
+  bindValues();
 
   const form = $("#settings-form");
   form.addEventListener("change", (e) => {

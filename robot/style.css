@@ -153,14 +153,6 @@ input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid 
 .with-btn { display: flex; gap: 8px; }
 .with-btn input { flex: 1; min-width: 0; }
 
-input[type="range"] {
-  width: 100%;
-  margin: 0;
-  height: 30px;
-  accent-color: var(--accent);
-  touch-action: none;
-  cursor: pointer;
-}
 
 /* ---------- Login ---------- */
 
@@ -258,7 +250,7 @@ input[type="range"] {
 
 /* ---------- Kolom kiri: maju/mundur + speed ---------- */
 
-.drive { grid-template-rows: auto auto minmax(0, 1fr); }
+.drive { grid-template-rows: auto auto auto minmax(0, 1fr); }
 .throttle { display: grid; grid-template-rows: 1fr 1fr; gap: var(--gap); min-height: 0; }
 .steer { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); min-height: 0; }
 .pad-btn {
@@ -292,8 +284,17 @@ input[type="range"] {
 }
 .pad-btn.active small { color: var(--on-accent); }
 .slider-card { display: grid; gap: 2px; }
+.num-row { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; }
+.num-row input[type="number"] { flex: 1 1 auto; min-width: 0; width: 100%; height: 32px; min-height: 0; padding: 2px 6px; font-family: var(--font-num); font-weight: 700; text-align: center; -moz-appearance: textfield; appearance: textfield; }
+.num-row input[type="number"]::-webkit-outer-spin-button, .num-row input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.num-row .btn.send { flex: none; min-height: 0; height: 32px; padding: 0 10px; font-size: 0.8rem; letter-spacing: 0.06em; border-color: var(--accent); }
+.clamp-note { flex: 0 1 auto; min-width: 0; color: var(--critical-text); font-size: 0.68rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .drive-state { text-align: center; font-family: var(--font-num); font-weight: 700; letter-spacing: 0.08em; color: var(--text-2); }
 .drive-state.moving { color: var(--accent); }
+.ack { min-height: 1.35em; line-height: 1.35; text-align: center; font-family: var(--font-num); font-size: 0.72rem; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ack.server { color: var(--text); }
+.ack.done { color: var(--good-text); }
+.ack.fail { color: var(--critical-text); }
 
 /* ---------- Kolom tengah: suhu, grafik, web dosen ---------- */
 
@@ -337,7 +338,7 @@ input[type="range"] {
 
 /* ---------- Kolom kanan: lengan, capit, stop ---------- */
 
-.arm { grid-template-rows: auto auto minmax(0, 1fr); }
+.arm { grid-template-rows: auto auto auto minmax(0, 1fr); }
 .servo { display: grid; gap: 4px; }
 .presets { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
 .servo { align-content: start; }
@@ -386,7 +387,7 @@ input[type="range"] {
   .app.portrait-ok .throttle { height: 56vw; }
   .app.portrait-ok .steer { height: 30vw; }
   .app.portrait-ok .chart-card { height: 180px; }
-  .app.portrait-ok .arm { grid-template-rows: auto auto auto; }
+  .app.portrait-ok .arm { grid-template-rows: auto auto auto auto; }
   .app.portrait-ok .estop { min-height: 64px; }
   .brand { display: none; }
 }
@@ -396,20 +397,32 @@ input[type="range"] {
   .bar { padding-bottom: 4px; }
   .icon-btn { height: 30px; width: 34px; }
   .web .btn.mini { min-height: 28px; }
-  input[type="range"] { height: 26px; }
+  .num-row input[type="number"], .num-row .btn.send { height: 28px; }
 }
 
 @media (max-height: 350px) {
   .chart-card { display: none; }
+  .drive-state { display: none; }
+  .drive { grid-template-rows: auto auto minmax(0, 1fr); }
   .monitor { grid-template-rows: auto auto minmax(0, 1fr); }
   .web-last { -webkit-line-clamp: 1; }
   .card { padding: 4px 8px; }
-  input[type="range"] { height: 22px; }
+  .num-row input[type="number"], .num-row .btn.send { height: 24px; }
+  .num-row .btn.send { padding: 0 8px; }
   .servo, .slider-card { grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 6px; row-gap: 2px; }
   .servo .row-head, .slider-card .row-head { flex-direction: column; align-items: flex-start; gap: 0; letter-spacing: 0.04em; }
-  .servo input[type="range"] { grid-column: 1 / -1; }
+  .servo .num-row { grid-column: 1 / -1; }
   .presets { gap: 4px; }
-  .btn.chip { min-height: 30px; padding: 4px 0; font-size: clamp(0.72rem, 1.7vw, 0.8rem); letter-spacing: 0; }
+  .btn.chip { min-height: 28px; padding: 3px 0; font-size: clamp(0.72rem, 1.7vw, 0.8rem); letter-spacing: 0; }
+  .arm { gap: 4px; }
+}
+
+@media (max-height: 290px) {
+  .btn.chip { min-height: 24px; }
+  .num-row input[type="number"], .num-row .btn.send { height: 22px; }
+  .ack { font-size: 0.66rem; line-height: 1.2; min-height: 1.2em; }
+  .arm, .drive { gap: 4px; }
+  .card { padding: 2px 8px; }
 }
 
 @media (max-width: 700px) and (orientation: landscape) {
