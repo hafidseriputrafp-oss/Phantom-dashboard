@@ -710,7 +710,7 @@ function deviceInput(value) {
   return input("device", value, "text", { list: "device-list", spellcheck: "false", autocapitalize: "off", placeholder: "mis. logger" });
 }
 
-function variableInput(name, value, placeholder = "mis. suhu_ambient") {
+function variableInput(name, value, placeholder = "mis. suhu_objek") {
   return input(name, value, "text", { spellcheck: "false", autocapitalize: "off", placeholder });
 }
 

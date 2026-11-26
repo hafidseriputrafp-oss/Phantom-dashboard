@@ -50,7 +50,6 @@ char VAR_SPEED[]        = "speed";
 char VAR_LENGAN[]       = "lengan";
 char VAR_CAPIT[]        = "capit";
 char VAR_SUHU_OBJEK[]   = "suhu_objek";
-char VAR_SUHU_AMBIENT[] = "suhu_ambient";
 char VAR_ACK_GERAK[]    = "ack_gerak";
 char VAR_ACK_LENGAN[]   = "ack_lengan";
 char VAR_ACK_CAPIT[]    = "ack_capit";
@@ -129,7 +128,7 @@ const uint8_t ASAL_UBIDOTS = 0, ASAL_EMQX = 1;
 volatile bool emqxBaruTersambung = false;
 bool emqxAktif = false;
 unsigned long lastHeapLogMs = 0;
-float suhuObjek = NAN, suhuAmbient = NAN;
+float suhuObjek = NAN;
 
 bool mlxOk = false, rtcOk = false, sdOk = false;
 bool wifiWasConnected = false, timeSynced = false, ntpStarted = false;
@@ -224,10 +223,8 @@ void readSensors() {
   }
   if (mlxOk) {
     suhuObjek = mlx.readObjectTempC();
-    suhuAmbient = mlx.readAmbientTempC();
   } else {
     suhuObjek = NAN;
-    suhuAmbient = NAN;
   }
 }
 
@@ -285,7 +282,7 @@ void setupSd() {
   if (sdOk && !SD.exists(LOG_FILE)) {
     File f = SD.open(LOG_FILE, FILE_WRITE);
     if (f) {
-      f.println("waktu,suhu_objek,suhu_ambient,gerak,speed,lengan,capit");
+      f.println("waktu,suhu_objek,gerak,speed,lengan,capit");
       f.close();
     } else {
       sdOk = false;
@@ -308,7 +305,7 @@ void logToSd() {
   }
   char ts[24];
   formatTimestamp(ts, sizeof(ts));
-  f.printf("%s,%.2f,%.2f,%d,%d,%d,%d\n", ts, suhuObjek, suhuAmbient, (int)currentMove, currentSpeed, lenganDeg, capitDeg);
+  f.printf("%s,%.2f,%d,%d,%d,%d\n", ts, suhuObjek, (int)currentMove, currentSpeed, lenganDeg, capitDeg);
   f.close();
 }
 
@@ -539,7 +536,6 @@ void publishSensors() {
   if (WiFi.status() != WL_CONNECTED || !ubidots.connected()) return;
   int count = 0;
   if (!isnan(suhuObjek))   { ubidots.add(VAR_SUHU_OBJEK, suhuObjek); count++; }
-  if (!isnan(suhuAmbient)) { ubidots.add(VAR_SUHU_AMBIENT, suhuAmbient); count++; }
   if (count > 0) ubidots.ubidotsPublish(DEVICE_LABEL);
 }
 
