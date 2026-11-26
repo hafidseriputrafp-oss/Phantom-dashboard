@@ -366,7 +366,7 @@ Sesuai aturan lomba, robot **tidak pernah membuat WiFi/hotspot sendiri**. ESP32 
 sebagai *station* (`WIFI_STA`) dan terhubung ke hotspot HP yang namanya ditulis di `secrets.h`.
 
 1. Nyalakan hotspot HP dengan nama & password yang sama dengan `SECRET_WIFI_SSID` / `SECRET_WIFI_PASS`.
-2. Nyalakan robot. Ia mencoba terhubung, dan mengulang tiap 10 detik kalau gagal.
+2. Nyalakan robot. Ia mencoba terhubung, dan mengulang tiap 30 detik kalau gagal.
 3. Buka Serial Monitor (115200) untuk melihat IP dan status MQTT/Firebase.
 
 Selama WiFi atau MQTT putus, motor selalu berhenti. Untuk mengganti hotspot, ubah `secrets.h` lalu

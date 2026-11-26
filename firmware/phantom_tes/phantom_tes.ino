@@ -72,7 +72,7 @@ const unsigned long SENSOR_INTERVAL_MS  = 1000;   // baca sensor & log microSD
 const unsigned long HEARTBEAT_MS        = 1500;   // dashboard kirim ulang "gerak" tiap 1,5 dtk saat ditahan
 const unsigned long FAILSAFE_TIMEOUT_MS = HEARTBEAT_MS + 1500;   // toleransi antrean request + jaringan
 const unsigned long MQTT_RETRY_MS       = 3000;
-const unsigned long WIFI_RETRY_MS       = 10000;
+const unsigned long WIFI_RETRY_MS       = 30000;
 const long          GMT_OFFSET_S        = 7 * 3600;   // WIB
 const char*         LOG_FILE            = "/phantom_tes.csv";
 
@@ -450,7 +450,7 @@ void setupEmqx() {
   emqx.setSocketTimeout(5);
   emqx.setBufferSize(256);
   emqx.setCallback(onEmqxMessage);
-  xTaskCreatePinnedToCore(emqxConnectTask, "emqx", 10240, nullptr, 1, nullptr, 0);
+  xTaskCreatePinnedToCore(emqxConnectTask, "emqx", 10240, nullptr, 0, nullptr, 0);
 }
 
 void handleEmqx() {
