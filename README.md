@@ -6,7 +6,7 @@ Situsnya statis untuk GitHub Pages: tanpa backend dan tanpa build tool.
 | Alamat | Isi |
 |--------|-----|
 | `/` ([`index.html`](index.html), [`home.js`](home.js)) | **Beranda**: daftar dashboard, tambah/ubah/duplikat/hapus |
-| `/robot/` ([`robot/`](robot/)) | **Robot Phantom**: dashboard kontrol robot rescue (D-pad, STOP darurat, heartbeat) |
+| `/robot/` ([`robot/`](robot/)) | **Robot Phantom**: dashboard kontrol robot rescue (D-pad, STOP darurat, failsafe) |
 | `/dash/?id=<id>` ([`dash/`](dash/)) | **Builder**: menampilkan & mengedit dashboard buatan sendiri |
 | [`shared/`](shared/) | Kode bersama: `token.js` (layar token untuk semua halaman), tema, API Ubidots + antrean request, sinkron cloud |
 | [`firmware/`](firmware/) | Firmware ESP32 robot Phantom: `phantom_tes` (latihan) dan `phantom_lomba` (kirim ke web dosen) |
@@ -268,7 +268,7 @@ Di bawah teks arah (kolom kiri) dan di atas tombol ◀ ▶ (untuk lengan/capit) 
 | `⏳ MAJU dikirim…` | tombol baru ditekan |
 | `📡 MAJU sampai di server` | broker Ubidots sudah menerima (PUBACK MQTT / REST 200) |
 | `✅ MAJU terlaksana (420 ms)` | robot membalas lewat `ack_gerak`; angka = waktu dari tombol ditekan sampai balasan masuk |
-| `❌ Robot tidak membalas` | 3 detik tanpa balasan (robot mati, WiFi robot putus, atau firmware lama) |
+| `❌ Robot tidak membalas` | 5 detik tanpa balasan, termasuk sesudah kirim ulang (robot mati, WiFi robot putus, atau firmware lama) |
 
 Untuk servo: `✅ CAPIT 110° terlaksana (…)`. Kalau robot membatasi sudut, yang tampil adalah sudut
 hasil robot. Menahan tombol (heartbeat) tidak mengulang status. Kalau robot berhenti sendiri karena
@@ -280,9 +280,14 @@ bisa diterima lewat jalur MQTT. Saat dashboard memakai REST, status berhenti di 
 - Semua variabel device dibaca dengan **1 request** (`GET /api/v2.0/devices/~phantom/variables/`).
 - Request baca/servo lewat antrean dengan jarak minimal 1,1 detik; nilai servo/speed digabung (hanya nilai
   terakhir yang dikirim). Lewat MQTT, servo dan gerak tidak memakai kuota REST.
-- Saat memakai REST, polling dijeda selama menyetir sampai 1,5 detik setelah berhenti. `gerak` dikirim
-  ulang tiap **1,5 detik** selama tombol ditahan sebagai heartbeat untuk failsafe firmware (motor
-  berhenti sendiri setelah 3 detik tanpa perintah).
+- Saat memakai REST, polling dijeda selama menyetir sampai 1,5 detik setelah berhenti.
+- **`gerak` hanya dikirim saat perintah berubah** (MAJU, STOP, KIRI, …). Ketuk MAJU → STOP = 2 kiriman.
+  - Kalau lewat MQTT robot belum membalas (`ack_gerak`), perintah terakhir dikirim ulang. Gerak
+    dikirim ulang setelah 2 detik, maksimal 2 kali; STOP setelah 1,5 detik, maksimal 4 kali. Kiriman
+    yang hilang (mis. kena batas laju akun gratis) tetap sampai. Kalau robot sudah membalas, tidak ada
+    kiriman ulang.
+  - Hanya kalau tombol **ditahan lebih dari 5 detik**, `gerak` yang sama dikirim lagi tiap 5 detik
+    sebagai pengaman: kalau HP putus internet, robot berhenti sendiri setelah 8 detik.
 - Jika Ubidots membalas **HTTP 429**, dashboard menunggu otomatis (backoff 2 → 4 → 8 … maks. 60 detik);
   perintah berhenti tetap dicoba ulang sampai terkirim.
 
@@ -375,15 +380,26 @@ Catatan wiring:
   Versi 9: MAX capit yang masih 110 dinaikkan ke 140; nilai lain tetap. Pengaturan lain tidak disentuh.
 - Nama client MQTT tetap `garuda13-phantom` (`MQTT_CLIENT`), tidak lagi `00:00:00:00:00:00`.
 - **Balasan (ACK):** setelah perintah dijalankan, robot mengirim `ack_gerak` / `ack_lengan` /
-  `ack_capit` ke Ubidots dalam satu publish dari `loop()` (`kirimAck()`), tidak dari callback MQTT.
+  `ack_capit` ke Ubidots dari `loop()` (`kirimUbidots()`), tidak dari callback MQTT.
+- **Robot publish maks. 1 kali per detik** (`PUBLISH_JEDA_MS`). ACK, `suhu_objek`, dan hasil web dosen
+  (program lomba) digabung dalam satu publish (maks. 5 nilai). Dulu ketiganya dikirim terpisah, sehingga
+  bisa beberapa pesan dalam satu detik dan melewati batas laju akun Ubidots gratis.
+- **Subscribe ulang otomatis:** saat (re)connect robot subscribe semua variabel kontrol. Variabel yang
+  belum pernah mengirim pesan di-subscribe ulang tiap 10 detik (`SUB_ULANG_MS`), sampai pesan pertama
+  diterima. Dengan begitu robot tetap menerima perintah walaupun variabelnya baru dibuat dashboard setelah robot
+  menyala (akun baru). Di Serial Monitor tampil `Subscribe ulang <variabel> (belum ada pesan)`.
+- Setiap MQTT putus tercatat di Serial Monitor: `MQTT terputus (ke-N), motor berhenti, sambung ulang...`.
+- Dashboard melakukan hal yang sama untuk balasan robot: `ack_gerak`/`ack_lengan`/`ack_capit` yang
+  belum pernah membalas di-subscribe ulang tiap 10 detik, supaya status ✅ tetap muncul di akun baru.
   `ack_gerak` hanya dikirim saat gerak berubah (heartbeat dengan nilai sama tidak dibalas), saat
   failsafe menghentikan motor (0), dan saat (re)connect (0).
 
 **Fitur keamanan:**
 
-- Dashboard mengirim ulang `gerak` tiap 1,5 detik selama tombol ditahan (`HEARTBEAT_MS`). Motor
-  berhenti kalau heartbeat tidak datang lebih dari `FAILSAFE_TIMEOUT_MS` = 3 detik (1,5 detik +
-  toleransi antrean request dan jaringan 1,5 detik), atau saat WiFi/MQTT putus.
+- Motor berhenti saat WiFi/MQTT robot putus.
+- Motor juga berhenti kalau tidak ada perintah `gerak` lebih dari `FAILSAFE_TIMEOUT_MS` = 8 detik. Selama
+  tombol ditahan, dashboard mengulang perintah tiap 5 detik (`HEARTBEAT_MS`), jadi robot hanya berhenti
+  sendiri kalau HP putus. STOP tidak mengunci robot: perintah gerak berikutnya langsung dijalankan.
 - WiFi *modem sleep* dimatikan (`WiFi.setSleep(false)`), supaya perintah dari Ubidots langsung
   diterima tanpa jeda tidur radio. **Upload ulang firmware** setelah memperbarui dari repo ini.
 - Saat (re)connect, robot mengirim `gerak=0` (dan `kirim_hotspot=0` di program lomba) sebelum
