@@ -52,6 +52,7 @@ const MQTT_LIB = "https://cdn.jsdelivr.net/npm/mqtt@5.16.1/dist/mqtt.min.js";
 const MQTT_LIB_SRI = "sha384-ilRYg/zm2XqUafLvBoGVk40UfNRnvUkYMy+e/JPo4YgsFR6X9Q3jYEkqFQXquX4r";
 const MQTT_URLS = ["wss://industrial.api.ubidots.com:8084/mqtt", "wss://industrial.api.ubidots.com:8084"];
 const MQTT_CONNECT_MS = 5000;
+const ACK_SUB_ULANG_MS = 10000;
 const MQTT_ACK_MS = 1500;
 const CLAMP_NOTE_MS = 4000;
 const ROBOT_ONLINE_MS = 15000;
@@ -303,7 +304,7 @@ function postValues(values) {
 
 /* ---------- Jalur cepat: MQTT over WebSocket langsung ke broker Ubidots ---------- */
 
-const fast = { client: null, ready: false, lib: null, urlIdx: 0, fails: 0, qos: 1, acked: false, ackMiss: 0, timer: null };
+const fast = { client: null, ready: false, lib: null, urlIdx: 0, fails: 0, qos: 1, acked: false, ackMiss: 0, timer: null, subTimer: null, ackGot: {} };
 
 function loadScript(src, integrity) {
   return new Promise((resolve, reject) => {
@@ -323,6 +324,7 @@ function fastWanted() {
 
 function fastStop() {
   clearTimeout(fast.timer);
+  clearInterval(fast.subTimer);
   const c = fast.client;
   fast.client = null;
   fast.ready = false;
@@ -382,15 +384,22 @@ async function fastStart() {
     clearTimeout(fast.timer);
     fast.ready = true;
     fast.fails = 0;
-    const dev = state.settings.device;
-    try {
-      client.subscribe(Object.values(ACK_VARS).map((v) => `/v1.6/devices/${dev}/${v}/lv`), { qos: 0 }, () => {});
-    } catch {}
+    fast.ackGot = {};
+    subscribeAck(client);
+    clearInterval(fast.subTimer);
+    fast.subTimer = setInterval(() => {
+      if (fast.client !== client) {
+        clearInterval(fast.subTimer);
+        return;
+      }
+      subscribeAck(client);
+    }, ACK_SUB_ULANG_MS);
     showNet();
   });
   client.on("message", (topic, payload) => {
     if (fast.client !== client) return;
     const label = String(topic).split("/")[4];
+    fast.ackGot[label] = true;
     const variable = Object.keys(ACK_VARS).find((k) => ACK_VARS[k] === label);
     const text = String(payload);
     let value = Number(text);
@@ -403,6 +412,15 @@ async function fastStart() {
   client.on("close", down);
   client.on("offline", down);
   showNet();
+}
+
+function subscribeAck(client) {
+  const dev = state.settings.device;
+  const topics = Object.values(ACK_VARS).filter((v) => !fast.ackGot[v]).map((v) => `/v1.6/devices/${dev}/${v}/lv`);
+  if (!topics.length) return;
+  try {
+    client.subscribe(topics, { qos: 0 }, () => {});
+  } catch {}
 }
 
 function fastPublish(values) {

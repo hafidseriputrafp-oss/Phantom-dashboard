@@ -389,6 +389,8 @@ Catatan wiring:
   diterima. Dengan begitu robot tetap menerima perintah walaupun variabelnya baru dibuat dashboard setelah robot
   menyala (akun baru). Di Serial Monitor tampil `Subscribe ulang <variabel> (belum ada pesan)`.
 - Setiap MQTT putus tercatat di Serial Monitor: `MQTT terputus (ke-N), motor berhenti, sambung ulang...`.
+- Dashboard melakukan hal yang sama untuk balasan robot: `ack_gerak`/`ack_lengan`/`ack_capit` yang
+  belum pernah membalas di-subscribe ulang tiap 10 detik, supaya status ✅ tetap muncul di akun baru.
   `ack_gerak` hanya dikirim saat gerak berubah (heartbeat dengan nilai sama tidak dibalas), saat
   failsafe menghentikan motor (0), dan saat (re)connect (0).
 
